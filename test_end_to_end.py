@@ -1,21 +1,20 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # DQ Framework — End-to-End Test
+# MAGIC # DQ Framework — End-to-End Test (SQL Engine)
 # MAGIC
 # MAGIC **Dataset:** `samples.nyctaxi.trips` (built-in Databricks sample)
 # MAGIC
 # MAGIC **Test:** Check that column `passenger_count` has no NULL values.
+# MAGIC
+# MAGIC **Engine:** `sql` (Returns rows that fail the condition, i.e., rows where passenger_count IS NULL)
 # MAGIC
 # MAGIC **Run cells in order — top to bottom.**
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 0 — Install dependencies
-
-# COMMAND ----------
-
-# MAGIC %pip install databricks-labs-dqx
+# MAGIC ## Step 0 — Restart Python
+# MAGIC Clears the state to ensure a clean run.
 
 # COMMAND ----------
 
@@ -24,7 +23,8 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 1 — Config
+# MAGIC ## Step 1 — Setup Environment
+# MAGIC Adds the repository to the Python path and defines the catalog where the framework tables reside.
 
 # COMMAND ----------
 
@@ -37,6 +37,7 @@ CATALOG = "analytics_dq_dev"
 
 # MAGIC %md
 # MAGIC ## Step 2 — Verify sample dataset exists
+# MAGIC Just a quick check to make sure we can read the NYC Taxi sample data.
 
 # COMMAND ----------
 
@@ -48,7 +49,8 @@ print(f"Columns: {df_sample.columns}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3 — Clear all tables (fresh start)
+# MAGIC ## Step 3 — Clear all tables (Fresh start)
+# MAGIC Truncates all metadata, configuration, results, and audit tables so we can start from scratch.
 
 # COMMAND ----------
 
@@ -57,7 +59,7 @@ tables_to_clear = [
     f"{CATALOG}.configuration.rule_template",
     f"{CATALOG}.configuration.run_policy",
     f"{CATALOG}.configuration.apply_at",
-    f"{CATALOG}.metadata.table",
+    f"{CATALOG}.metadata.`table`", # Notice the backticks for reserved keyword
     f"{CATALOG}.metadata.project",
     f"{CATALOG}.metadata.rule_type",
     f"{CATALOG}.metadata.rule_dimension",
@@ -78,6 +80,7 @@ print("All tables cleared!")
 
 # MAGIC %md
 # MAGIC ## Step 4 — Load minimal configuration
+# MAGIC Populates the necessary lookup tables: rule types, dimensions, projects, run policies, and application layers. 
 
 # COMMAND ----------
 
@@ -131,14 +134,16 @@ print("Minimal config loaded!")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 5 — Create rule template
+# MAGIC ## Step 5 — Create rule template (SQL Engine)
+# MAGIC Defines the generic `is_not_null` rule using pure SQL. The framework expects the SQL statement to return the *failing* records.
 
 # COMMAND ----------
 
 rule_type_id = spark.sql(f"SELECT rule_type_id FROM {CATALOG}.metadata.rule_type WHERE rule_type='technical'").collect()[0][0]
 rule_dim_id  = spark.sql(f"SELECT rule_dimension_id FROM {CATALOG}.metadata.rule_dimension WHERE rule_dimension='completeness'").collect()[0][0]
 
-# is_not_null: built-in DQX check — engine_type="dqx", scope="column"
+# engine_type = "sql"
+# statement: SELECT * FROM ${table} WHERE ${i:column} IS NULL
 spark.sql(f"""
     INSERT INTO {CATALOG}.configuration.rule_template
         (name, description, rule_type_id, rule_dimension_id,
@@ -147,20 +152,22 @@ spark.sql(f"""
         'is_not_null',
         'Column must not contain NULL values',
         {rule_type_id}, {rule_dim_id},
-        'column', true, 'dqx', 'is_not_null',
+        'column', true, 'sql',
+        'SELECT * FROM ${{table}} WHERE ${{i:column}} IS NULL',
         true, 'test_user', current_timestamp(), NULL
     )
 """)
-print("rule_template: is_not_null (engine=dqx)")
+print("rule_template: is_not_null (engine=sql)")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Step 6 — Register the table to check
+# MAGIC Tells the framework about the `samples.nyctaxi.trips` table. `is_active=true` is required.
 
 # COMMAND ----------
 
-# KEY: is_active=true is REQUIRED — without it the framework ignores this table
+# filter_field: tpep_pickup_datetime. The framework will test the latest partition by default based on this field.
 spark.sql(f"""
     INSERT INTO {CATALOG}.metadata.`table`
         (environment, `catalog`, `schema`, `table`, layer,
@@ -179,6 +186,7 @@ print("table registered: samples.nyctaxi.trips")
 
 # MAGIC %md
 # MAGIC ## Step 7 — Assign rule to table
+# MAGIC Links the rule template, the table, the policy, and the project together, while providing the specific column name (`passenger_count`) to check.
 
 # COMMAND ----------
 
@@ -190,7 +198,7 @@ project_id  = spark.sql(f"SELECT project_id FROM {CATALOG}.metadata.project WHER
 
 print(f"IDs: template={template_id}, table={table_id}, policy={policy_id}, apply_at={apply_at_id}, project={project_id}")
 
-# parameters_identifiers: maps ${i:column} placeholder → actual column name
+# parameters_identifiers: maps ${i:column} placeholder → 'passenger_count'
 spark.sql(f"""
     INSERT INTO {CATALOG}.configuration.rule_assignment
         (rule_template_id, template_nk, policy_id, project_id, project_nk,
@@ -213,6 +221,7 @@ print("rule_assignment: is_not_null -> passenger_count -> samples.nyctaxi.trips"
 
 # MAGIC %md
 # MAGIC ## Step 8 — Verify config (sanity check)
+# MAGIC Confirms that the assignment is active and all joined entities are active.
 
 # COMMAND ----------
 
@@ -240,6 +249,7 @@ spark.sql(f"""
 
 # MAGIC %md
 # MAGIC ## Step 9 — Run the framework!
+# MAGIC Invokes the core framework execution logic. We pass `project_name` to ensure it targets our setup.
 
 # COMMAND ----------
 
@@ -249,6 +259,7 @@ job_id = run_data_quality(
     apply_at='gold',
     run_mode='all',
     full_table_name='samples.nyctaxi.trips',
+    project_name='test_project',
     display_logs=True
 )
 
@@ -258,6 +269,7 @@ print(f"Done! job_id = {job_id}")
 
 # MAGIC %md
 # MAGIC ## Step 10 — View results
+# MAGIC Queries the results and audit tables to inspect the outcome.
 
 # COMMAND ----------
 
