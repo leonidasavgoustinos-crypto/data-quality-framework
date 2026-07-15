@@ -317,6 +317,7 @@ sql_statement = """CREATE TABLE IF NOT EXISTS analytics_audit.dev.processing_job
     target_table  STRING,
     source_table  STRING,
     status        STRING,
+    error_message STRING,
     start_time    TIMESTAMP,
     end_time      TIMESTAMP
 )
@@ -327,3 +328,4 @@ try:
     print("✅ analytics_audit.dev.processing_job_status created")
 except Exception as e:
     print(e)
+
