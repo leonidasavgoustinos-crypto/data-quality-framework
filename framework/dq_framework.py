@@ -18,7 +18,7 @@ def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, 
 
         get_project_id(params)
         open_result(params)
-        open_audit_log(params)
+        # open_audit_log(params)
 
         df_active_rules = get_active_rules(params)
 
@@ -38,7 +38,7 @@ def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, 
             )
 
         close_result(params)
-        close_audit_log(params)
+        # close_audit_log(params)
 
         log_execution_summary(params)
 
@@ -52,7 +52,7 @@ def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, 
         update_result_execution_failure(params)
         update_result_table_execution_failure(params)
         update_result_rule_execution_failure(params)
-        update_audit_log_failure(params)
+        # update_audit_log_failure(params)
         raise
 
 
