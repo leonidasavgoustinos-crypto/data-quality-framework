@@ -6,6 +6,7 @@ name = "analytics_dq_"
 catalog = f"{name}{environment}"
 schemas = ["metadata", "results", "configuration", "quarantine", "reporting"]
 
+spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog}")
 
 for schema in schemas:
    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
@@ -305,27 +306,6 @@ COMMENT 'Project Information'"""
  
 try:  
     spark.sql(sql_statement)
-except Exception as e:
-    print(e)
-
-###### processing_job_status (audit log — in analytics_audit catalog) ######
-# NOTE: This table is required by the framework but lives in a separate catalog.
-# Make sure analytics_audit catalog and analytics_audit.dev schema exist before running this.
-sql_statement = """CREATE TABLE IF NOT EXISTS analytics_audit.dev.processing_job_status (
-    job_id        STRING,
-    job_type      STRING,
-    target_table  STRING,
-    source_table  STRING,
-    status        STRING,
-    error_message STRING,
-    start_time    TIMESTAMP,
-    end_time      TIMESTAMP
-)
-USING DELTA
-COMMENT 'Audit log for all DQ framework job executions'"""
-try:
-    spark.sql(sql_statement)
-    print("✅ analytics_audit.dev.processing_job_status created")
 except Exception as e:
     print(e)
 
