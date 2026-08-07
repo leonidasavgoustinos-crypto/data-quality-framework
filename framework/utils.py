@@ -134,18 +134,6 @@ def open_result(params):
 
     result_delta_table = DeltaTable.forName(spark, RESULT)
 
-    result_delta_table.update(
-        condition = (
-            (F.col("status") == RUNNING) &
-            (F.col("result_id") != params.result.result_id) &
-            F.col("end_timestamp").isNull()
-        ),
-        set = {
-            "status": F.lit(CODE_ERROR),
-            "end_timestamp": F.current_timestamp()
-        }
-    )
-
     spark.sql(f"""INSERT INTO {RESULT} (result_id, status, start_timestamp)
                   VALUES ('{params.result.result_id}', '{RUNNING}', current_timestamp())""")
 
@@ -195,18 +183,6 @@ def open_result_table(params):
 
     result_delta_table = DeltaTable.forName(spark, RESULT_TABLE)
 
-    result_delta_table.update(
-        condition = (
-            (F.col("status") == RUNNING) &
-            (F.col("result_id") != params.result.result_id) &
-            F.col("end_timestamp").isNull()
-        ),
-        set = {
-            "status": F.lit(CODE_ERROR),
-            "end_timestamp": F.current_timestamp()
-        }
-    )
-
     spark.sql(f"""INSERT INTO {RESULT_TABLE} (result_table_id, status, start_timestamp)
                   VALUES ('{params.result.result_table_id}', '{RUNNING}', current_timestamp())""")
 
@@ -245,18 +221,6 @@ def open_result_rule(params):
     params.result.result_rule_id = str(uuid.uuid4())
 
     result_rule_delta_table = DeltaTable.forName(spark, RESULT_RULE)
-
-    result_rule_delta_table.update(
-        condition = (
-            (F.col("status") == RUNNING) &
-            (F.col("result_id") != params.result.result_id) &
-            F.col("end_timestamp").isNull()
-        ),
-        set = {
-            "status": F.lit(CODE_ERROR),
-            "end_timestamp": F.current_timestamp()
-        }
-    )
 
     spark.sql(f"""INSERT INTO {RESULT_RULE} (result_rule_id, status, start_timestamp)
                   VALUES ('{params.result.result_rule_id}', '{RUNNING}', current_timestamp())""")
