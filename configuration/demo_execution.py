@@ -132,8 +132,7 @@ from framework.dq_framework import run_data_quality
 job_id = run_data_quality(
     apply_at="gold", 
     run_mode="all", 
-    project_name="demo_project",         
-    full_table_name=None,  #none = maximum value   
+    project_name="demo_project",             
     display_logs=True
 )
 
@@ -165,6 +164,29 @@ job_id = run_data_quality(
 )
 
 print(f"Job ID = {job_id}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Quality directly on the in memory DataFrame
+
+# COMMAND ----------
+
+# Create an in-memory DataFrame (e.g. fresh data coming from an API or transformation)
+df_custom = spark.sql("SELECT * FROM samples.nyctaxi.trips LIMIT 50")
+
+# Run Data Quality directly on the DataFrame
+# We tell it to apply the rules that are configured for 'test_trips_clean'
+job_id = run_data_quality(
+    apply_at="gold", 
+    run_mode="all", 
+    project_name="demo_project",         
+    full_table_name="analytics_dq_dev.metadata.test_trips_clean",
+    df_input=df_custom,        # <--- PASSING THE DATAFRAME HERE!
+    display_logs=True
+)
+
+# Notice in the logs that it evaluates exactly 50 rows (the size of our dataframe),
 
 # COMMAND ----------
 
