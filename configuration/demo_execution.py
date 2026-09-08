@@ -132,14 +132,10 @@ from framework.dq_framework import run_data_quality
 job_id = run_data_quality(
     apply_at="gold", 
     run_mode="all", 
-    project_name="demo_project",             
+    project_name="demo_project",  
+    full_table_name=None,           
     display_logs=True
 )
-
-# Alternative Execution Modes (Uncomment to test):
-# job_id = run_data_quality(apply_at='bronze', run_mode='all', filter_values='20250101', display_logs=True)
-# job_id = run_data_quality(apply_at='fs', run_mode='all', filter_values=['2012-03-30', '2017-09-29'], display_logs=True)
-# job_id = run_data_quality(apply_at='fs', run_mode='warning', display_logs=True)
 
 print(f"Job ID = {job_id}")
 

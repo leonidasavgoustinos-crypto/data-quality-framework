@@ -1,4 +1,9 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
+# Databricks notebook source
 dbutils.widgets.text("target_environment", "")
 environment = dbutils.widgets.get("target_environment")
 environment = 'dev'
@@ -129,24 +134,16 @@ sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.rule_assignment (
         CONCAT(
             template_nk,
             '.',
-            COALESCE(NULLIF(project_nk, ''), '_NULL_'),
+            CASE WHEN project_nk = '' OR project_nk IS NULL THEN '_NULL_' ELSE project_nk END,
             '.',
             table_nk,
             '.',
             apply_at_nk,
             '.',
-            COALESCE(
-                to_json(
-                    from_json(
-                        CASE 
-                            WHEN parameters_identifiers = '' THEN NULL
-                            ELSE parameters_identifiers
-                        END,
-                        'MAP<STRING, STRING>'
-                    )
-                ),
-                '_NULL_'
-            )
+            CASE 
+                WHEN parameters_identifiers = '' OR parameters_identifiers IS NULL THEN '_NULL_'
+                ELSE COALESCE(to_json(from_json(parameters_identifiers, 'MAP<STRING, STRING>')), '_NULL_')
+            END
         )
     ),
     added_by    STRING,
@@ -308,4 +305,3 @@ try:
     spark.sql(sql_statement)
 except Exception as e:
     print(e)
-
