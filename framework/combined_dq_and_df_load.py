@@ -66,7 +66,7 @@ def run_dq_and_insert(
         target_table=full_table_name
     )
 
-    job_id = run_data_quality(
+    result_id = run_data_quality(
         apply_at=apply_at_value,
         run_mode=run_mode,
         full_table_name=full_table_name,
@@ -75,14 +75,17 @@ def run_dq_and_insert(
         display_logs=display_logs
     )
     dq_status = (
-        spark.table(f"analytics_audit.{env}.processing_job_status")
+        spark.table(f"analytics_dq_{env}.results.result")
              .select("status")
-             .where(f"job_id = '{job_id}'")
+             .where(f"result_id = '{result_id}'")
              .collect()
     )
 
-    if dq_status and dq_status[0]["status"] == "failed":
-        dbutils.notebook.exit(f"❌ Data Quality failed for table {full_table_name}. Insert skipped.")
+    if not dq_status or dq_status[0]["status"] != "pass":
+        status = dq_status[0]["status"] if dq_status else "not found"
+        dbutils.notebook.exit(
+            f"❌ Data Quality status is '{status}' for table {full_table_name}. Insert skipped."
+        )
 
     print(f"✅ Data Quality passed for table {full_table_name}. Proceeding with insert.")
 
@@ -92,4 +95,3 @@ def run_dq_and_insert(
             .insertInto(full_table_name)
     )
 
- 

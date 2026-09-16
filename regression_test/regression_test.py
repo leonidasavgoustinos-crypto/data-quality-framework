@@ -9,13 +9,13 @@ import sys
 sys.path.append('/Workspace/Users/zeakisko@piraeusbank.gr/AIProjects/data_quality_framework/framework')
 from framework.dq_framework import run_data_quality
 
-job_id = run_data_quality(apply_at='test', run_mode='all',display_logs= True)
-#job_id = run_data_quality(apply_at='test_test', run_mode='all',display_logs= True)
+result_id = run_data_quality(apply_at='test', run_mode='all',display_logs= True)
+#result_id = run_data_quality(apply_at='test_test', run_mode='all',display_logs= True)
 
 
 table_name = 'analytics_fs_dev.risk.fs_global_customer_quarterly'
 df_input = spark.table(table_name)
-#job_id = run_data_quality(apply_at='bronze_to_fs', run_mode='all', full_table_name=table_name, df_input=df_input)
+#result_id = run_data_quality(apply_at='bronze_to_fs', run_mode='all', full_table_name=table_name, df_input=df_input)
 
 # COMMAND ----------
 
@@ -125,7 +125,7 @@ print(f"\n🔍 CHECKING: QUARANTINE")
 def selectable_columns(table, ignore_columns):
     cols = spark.table(table).columns
     return ", ".join([c for c in cols if c not in ignore_columns])
- 
+
 prod_table = "analytics_dq_dev.quarantine.test_cases_test_case_1"
 test_table = "analytics_dq_dev.test_cases.test_cases_quarantine"
  
@@ -164,5 +164,3 @@ else:
     print("❌ [QUARANTINE] NOT EQUAL")
     print(f"👉 DIFFERENT ROWS: {diff_count}")
     display(diff_df)
-
- 

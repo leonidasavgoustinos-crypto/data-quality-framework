@@ -44,7 +44,7 @@ def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, 
 
         log_end(params)
 
-        return params.meta.job_id
+        return params.result.result_id
 
     except Exception as e:
         print("Code failure")
