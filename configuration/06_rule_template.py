@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 dbutils.widgets.text("target_environment", "")
 dbutils.widgets.text("name", "")
 dbutils.widgets.text("description", "")
@@ -74,10 +78,13 @@ SELECT
     sha2(
         concat_ws(
             '||',
+            coalesce(cast(src.description AS string), '_NULL_'),
             coalesce(cast(rt.rule_type_id AS string), '_NULL_'),
             coalesce(cast(rd.rule_dimension_id AS string), '_NULL_'),
             coalesce(cast(src.scope AS string), '_NULL_'),
-            coalesce(cast(src.is_reusable AS string), '_NULL_')
+            coalesce(cast(src.is_reusable AS string), '_NULL_'),
+            coalesce(cast(src.engine_type AS string), '_NULL_'),
+            coalesce(cast(src.statement AS string), '_NULL_')
         ), 256
     ) AS new_hash
 
@@ -98,10 +105,13 @@ AND target.is_active = TRUE
 AND sha2(
         concat_ws(
             '||',
+            coalesce(cast(target.description AS string), '_NULL_'),
             coalesce(cast(target.rule_type_id AS string), '_NULL_'),
             coalesce(cast(target.rule_dimension_id AS string), '_NULL_'),
             coalesce(cast(target.scope AS string), '_NULL_'),
-            coalesce(cast(target.is_reusable AS string), '_NULL_')
+            coalesce(cast(target.is_reusable AS string), '_NULL_'),
+            coalesce(cast(target.engine_type AS string), '_NULL_'),
+            coalesce(cast(target.statement AS string), '_NULL_')
         ), 256
     ) <> source.new_hash
 
@@ -144,10 +154,13 @@ LEFT ANTI JOIN {catalog}.{schema}.rule_template t
     AND sha2(
             concat_ws(
                 '||',
+                coalesce(cast(t.description AS string), '_NULL_'),
                 coalesce(cast(t.rule_type_id AS string), '_NULL_'),
                 coalesce(cast(t.rule_dimension_id AS string), '_NULL_'),
                 coalesce(cast(t.scope AS string), '_NULL_'),
-                coalesce(cast(t.is_reusable AS string), '_NULL_')
+                coalesce(cast(t.is_reusable AS string), '_NULL_'),
+                coalesce(cast(t.engine_type AS string), '_NULL_'),
+                coalesce(cast(t.statement AS string), '_NULL_')
             ), 256
         ) = s.new_hash
 """
