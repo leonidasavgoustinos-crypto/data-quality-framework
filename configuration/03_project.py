@@ -42,6 +42,7 @@ users_input_view = f"""
 CREATE OR REPLACE TEMP VIEW prepared_project AS
 SELECT
     src.project,
+    src.project AS project_nk,
     src.project_description,
     src.added_by,
 
@@ -57,7 +58,7 @@ FROM project_inputs src
 users_update = f"""
 MERGE INTO {catalog}.{schema_metadata}.project AS t
 USING prepared_project AS s
-ON t.project = s.project
+ON t.project_nk = s.project_nk
 AND t.is_active = TRUE
 AND sha2(
         concat_ws(

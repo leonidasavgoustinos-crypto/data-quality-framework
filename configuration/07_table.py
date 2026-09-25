@@ -13,6 +13,7 @@ dbutils.widgets.dropdown("action", "no_action", ["no_action","insert/update", "d
 # COMMAND ----------
 
 from pyspark.sql.functions import sha2, concat_ws, coalesce, lit, col
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType
 
 environment = dbutils.widgets.get("target_environment")
 users_catalog = dbutils.widgets.get("catalog")
@@ -53,7 +54,19 @@ user_values = [
 
 ##### table ######
 
-df = spark.createDataFrame(user_values)
+schema_def = StructType([
+    StructField("environment", StringType(), True),
+    StructField("catalog", StringType(), True),
+    StructField("schema", StringType(), True),
+    StructField("table", StringType(), True),
+    StructField("layer", StringType(), True),
+    StructField("primary_keys", ArrayType(StringType()), True),
+    StructField("filter_field", StringType(), True),
+    StructField("filter_field_type", StringType(), True),
+    StructField("added_by", StringType(), True)
+])
+
+df = spark.createDataFrame(user_values, schema=schema_def)
 df.createOrReplaceTempView("table_inputs")
 
 users_input_view = f"""
