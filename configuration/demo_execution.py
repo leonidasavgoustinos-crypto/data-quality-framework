@@ -300,3 +300,46 @@ dbutils.notebook.run("./06_rule_template", 0,
 # MAGIC 2. The **new row** (`is_active = true`) was created with our new description and is now the currently active rule!
 # MAGIC
 # MAGIC This enables complete "Time Travel". If we look at the Data Quality results from 2 months ago, we know exactly how the rule was defined at that specific point in time.
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE TABLE analytics_dq_dev.metadata.demo_customers AS 
+# MAGIC SELECT * FROM samples.tpch.customer LIMIT 1000;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC - catalog: analytics_dq_dev
+# MAGIC - schema: metadata
+# MAGIC - table: demo_customers
+# MAGIC - layer: silver
+# MAGIC - primary_keys: c_custkey
+# MAGIC - filter_field:
+# MAGIC - filter_field_type:
+# MAGIC - added_by: Live Demo
+# MAGIC - action: insert/update
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC - target_environment: dev
+# MAGIC - table_nk: analytics_dq_dev.metadata.demo_customers
+# MAGIC - template_nk: check_is_not_null_sql
+# MAGIC - policy_nk: warning
+# MAGIC - parameters: {"column": "c_phone"}
+# MAGIC - added_by: Live Demo
+# MAGIC - action: insert/update
+
+# COMMAND ----------
+
+from framework.dq_framework import run_data_quality
+
+result_id = run_data_quality(
+    apply_at="silver", 
+    run_mode="all", 
+    project_name="demo_project",  
+    full_table_name="analytics_dq_dev.metadata.demo_customers",  
+    display_logs=True
+)
+
