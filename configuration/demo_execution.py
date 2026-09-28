@@ -1,8 +1,4 @@
 # Databricks notebook source
-# /// script
-# [tool.databricks.environment]
-# environment_version = "5"
-# ///
 # MAGIC %md
 # MAGIC # Data Quality Framework - Demo & Exploration
 # MAGIC Use this notebook to explore the underlying tables of the DQ framework, trigger executions, and analyze the final results and quarantine records.
@@ -10,33 +6,13 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1. Metadata Tables
-# MAGIC Explore the foundational metadata that defines projects, tables, and rule types.
+# MAGIC ## 1. Configuration and Metadata Tables
+# MAGIC Explore the framework tables in the same order used to create the configuration.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 1.1 Project
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT * FROM analytics_dq_dev.metadata.project;
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### 1.2 Table
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT * FROM analytics_dq_dev.metadata.table ORDER BY table_id;
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### 1.3 Rule Type
+# MAGIC ### 1.1 Rule Type
 
 # COMMAND ----------
 
@@ -46,7 +22,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 1.4 Rule Dimension
+# MAGIC ### 1.2 Rule Dimension
 
 # COMMAND ----------
 
@@ -56,43 +32,17 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## ⚙️ 2. Configuration Tables
-# MAGIC Explore how rules are templated, parameterized, and assigned to specific tables.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### 2.1 Rule Template
+# MAGIC ### 1.3 Project
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM analytics_dq_dev.configuration.rule_template ORDER BY rule_template_id;
+# MAGIC SELECT * FROM analytics_dq_dev.metadata.project;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 2.2 Rule Assignment
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT * FROM analytics_dq_dev.configuration.rule_assignment ORDER BY rule_assignment_id;
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### 2.4 Apply At
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT * FROM analytics_dq_dev.configuration.apply_at;
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### 2.5 Run Policy
+# MAGIC ### 1.4 Run Policy
 
 # COMMAND ----------
 
@@ -102,7 +52,47 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3. Execution
+# MAGIC ### 1.5 Apply At
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM analytics_dq_dev.configuration.apply_at;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 1.6 Rule Template
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM analytics_dq_dev.configuration.rule_template ORDER BY rule_template_id;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 1.7 Table
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM analytics_dq_dev.metadata.table ORDER BY table_id;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 1.8 Rule Assignment
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM analytics_dq_dev.configuration.rule_assignment ORDER BY rule_assignment_id;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2. Execution
 # MAGIC Examples of how to trigger the Data Quality framework programmatically.
 
 # COMMAND ----------
@@ -121,7 +111,7 @@ sys.path.append('/Workspace/Users/leonidas.avgoustinos@ms.d-one.ai/data-quality-
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Example 3.1 - Single Layer Checks
+# MAGIC ### Example 2.1 - Single Layer Checks
 # MAGIC Trigger Data Quality checks for all tables in a specific layer.
 
 # COMMAND ----------
@@ -142,7 +132,7 @@ print(f"Result ID = {result_id}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Example 3.1.1 - Runtime Filter Execution
+# MAGIC ### Example 2.1.1 - Runtime Filter Execution
 # MAGIC Execute checks dynamically by passing a specific filter value (e.g., a timestamp or date) at runtime.
 
 # COMMAND ----------
@@ -162,7 +152,7 @@ print(f"Result ID = {result_id}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Example 3.2 - Code Failure Handling
+# MAGIC ### Example 2.2 - Code Failure Handling
 # MAGIC Test how the framework handles exceptions and errors gracefully.
 
 # COMMAND ----------
@@ -184,7 +174,7 @@ print(f"Result ID = {result_id}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Data Quality directly on the in memory DataFrame
+# MAGIC ### Example 2.3 - Data Quality directly on an in-memory DataFrame
 
 # COMMAND ----------
 
@@ -207,7 +197,7 @@ result_id = run_data_quality(
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4. Quarantine Tables
+# MAGIC ## 3. Quarantine Tables
 # MAGIC
 
 # COMMAND ----------
@@ -219,7 +209,7 @@ result_id = run_data_quality(
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5. Results and Logs
+# MAGIC ## 4. Results and Logs
 # MAGIC Check the rule evaluation outcomes.
 
 # COMMAND ----------
@@ -239,6 +229,42 @@ result_id = run_data_quality(
 # MAGIC %sql
 # MAGIC -- Detailed Rule-level evaluation outcomes
 # MAGIC SELECT * FROM analytics_dq_dev.results.result_rule ORDER BY result_rule_id DESC;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5. Reporting Views
+# MAGIC Explore consolidated configuration, execution results, and performance metrics.
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Consolidated configuration and metadata
+# MAGIC SELECT * FROM analytics_dq_dev.reporting.v_consolidated_configuration_metadata;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Consolidated execution, table, and rule results
+# MAGIC SELECT * FROM analytics_dq_dev.reporting.v_dq_results;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Rule-level execution performance
+# MAGIC SELECT * FROM analytics_dq_dev.reporting.v_dq_rule_execution_performance;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Table-level execution performance
+# MAGIC SELECT * FROM analytics_dq_dev.reporting.v_dq_table_execution_performance;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Overall execution performance
+# MAGIC SELECT * FROM analytics_dq_dev.reporting.v_dq_execution_performance;
 
 # COMMAND ----------
 
@@ -342,4 +368,3 @@ result_id = run_data_quality(
     full_table_name="analytics_dq_dev.metadata.demo_customers",  
     display_logs=True
 )
-
