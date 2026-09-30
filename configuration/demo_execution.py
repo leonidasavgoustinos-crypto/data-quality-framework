@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # Data Quality Framework - Demo & Exploration
 # MAGIC Use this notebook to explore the underlying tables of the DQ framework, trigger executions, and analyze the final results and quarantine records.
@@ -97,7 +101,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-labs-dqx
+# MAGIC %pip install databricks-labs-dqx -q
 
 # COMMAND ----------
 
@@ -324,47 +328,120 @@ dbutils.notebook.run("./06_rule_template", 0,
 # MAGIC As you can see, we now have **two rows**:
 # MAGIC 1. The **old row** (`is_active = false`) was automatically closed at the exact moment we ran the update.
 # MAGIC 2. The **new row** (`is_active = true`) was created with our new description and is now the currently active rule!
-# MAGIC
-# MAGIC This enables complete "Time Travel". If we look at the Data Quality results from 2 months ago, we know exactly how the rule was defined at that specific point in time.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 7. Registering a New Table
+# MAGIC **Goal:** Demonstrate how effortlessly a Data Engineer can onboard a new table into the Data Quality framework.
+# MAGIC **What we are doing:** We are registering the `samples.tpch.orders` table into our metadata layer. We define its exact location (catalog/schema/table), the logical layer it belongs to (gold), its primary key, and the field used for incremental filtering. No code changes are required in the core DQ engine to support this new dataset.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 7.1. Assigning DQ Rules to the New Table
+# MAGIC **Goal:** Showcase the reusability of our Rule Templates and the flexibility of Rule Assignments.
+# MAGIC **What we are doing:** Now that the `orders` table is registered, we are dynamically assigning two existing Data Quality rules to it:
+# MAGIC 1. **`is_not_null`**: Applied to the `o_totalprice` column to ensure no missing values.
+
+# COMMAND ----------
+
+dbutils.notebook.run("./07_table", 0, {
+    "target_environment": "dev", 
+    "catalog": "samples", 
+    "schema": "tpch", 
+    "table": "orders", 
+    "layer": "gold", 
+    "primary_keys": "o_orderkey", 
+    "filter_field": "o_orderdate", 
+    "filter_field_type": "date", 
+    "added_by": "Demo", 
+    "action": "insert/update"
+})
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 7.2. Assigning DQ Rules to the New Table
+# MAGIC **Goal:** Showcase the reusability of our Rule Templates and the flexibility of Rule Assignments.
+# MAGIC **What we are doing:** Now that the `orders` table is registered, we are dynamically assigning two existing Data Quality rule to it:
+# MAGIC 1. **`is_not_null`**: Applied to the `o_totalprice` column to ensure no missing values.
+
+# COMMAND ----------
+
+dbutils.notebook.run("./08_rule_assignment", 0, {
+    "target_environment": "dev", 
+    "table": "samples.tpch.orders", 
+    "template": "is_not_null", 
+    "policy": "error.high.quarantine", 
+    "apply_at": "gold.project_agnostic", 
+    "parameters_identifiers": '{"column": "o_totalprice"}', 
+    "parameters_values": "", 
+    "project": "demo_project", 
+    "added_by": "Demo", 
+    "action": "insert/update"
+})
+
+# COMMAND ----------
+
+import sys
+sys.path.append('/Workspace/Users/leonidas.avgoustinos@ms.d-one.ai/data-quality-framework')
+from framework.dq_framework import run_data_quality
+
+result_id = run_data_quality(
+    apply_at="gold", 
+    run_mode="all", 
+    project_name="demo_project",  
+    full_table_name="samples.tpch.orders",
+    display_logs=True
+)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 8. Adding New Dimension
+# MAGIC **What we are doing:** We are introducing a new Rule Dimension called `completeness`. This dimension will be used to logically group all rules that check for missing or incomplete data, providing better categorization for our final DQ Dashboards.
+
+# COMMAND ----------
+
+dbutils.notebook.run("./02_rule_dimension", 0, {
+    "target_environment": "dev", 
+    "rule_dimension": "completeness", 
+    "description": "Checks for missing data", 
+    "added_by": "Demo", 
+    "action": "insert/update"
+})
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 8.1. Updating a Rule Template (SCD2 in Action)
+# MAGIC **Goal:** Highlight the framework's native Slowly Changing Dimension Type 2 (SCD2) capabilities and historical tracking.
+# MAGIC **What we are doing:** We are modifying the existing `is_not_null` rule template. Previously, it was categorized under the `validity` dimension. We are now updating it to map to our newly created `completeness` dimension.
+# MAGIC **Behind the scenes:** The framework calculates a hash of the input parameters, detects the change, and automatically performs an SCD2 operation: it "soft-deletes" (deactivates) the old record and inserts a new active record. This ensures we never lose historical tracking of how the rule was configured in the past!
+
+# COMMAND ----------
+
+dbutils.notebook.run("./06_rule_template", 0, {
+    "target_environment": "dev", 
+    "name": "is_not_null", 
+    "description": "value is not null.", 
+    "rule_type": "technical", 
+    "rule_dimension": "completeness", # <-
+    "scope": "column", 
+    "is_reusable": "true", 
+    "engine_type": "dqx", 
+    "statement": "is_not_null", 
+    "added_by": "Demo", 
+    "action": "insert/update"
+})
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE OR REPLACE TABLE analytics_dq_dev.metadata.demo_customers AS 
-# MAGIC SELECT * FROM samples.tpch.customer LIMIT 1000;
+# MAGIC SELECT * FROM analytics_dq_dev.metadata.rule_dimension;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC - catalog: analytics_dq_dev
-# MAGIC - schema: metadata
-# MAGIC - table: demo_customers
-# MAGIC - layer: silver
-# MAGIC - primary_keys: c_custkey
-# MAGIC - filter_field:
-# MAGIC - filter_field_type:
-# MAGIC - added_by: Live Demo
-# MAGIC - action: insert/update
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC - target_environment: dev
-# MAGIC - table_nk: analytics_dq_dev.metadata.demo_customers
-# MAGIC - template_nk: check_is_not_null_sql
-# MAGIC - policy_nk: warning
-# MAGIC - parameters: {"column": "c_phone"}
-# MAGIC - added_by: Live Demo
-# MAGIC - action: insert/update
-
-# COMMAND ----------
-
-from framework.dq_framework import run_data_quality
-
-result_id = run_data_quality(
-    apply_at="silver", 
-    run_mode="all", 
-    project_name="demo_project",  
-    full_table_name="analytics_dq_dev.metadata.demo_customers",  
-    display_logs=True
-)
+# MAGIC %sql
+# MAGIC SELECT * FROM analytics_dq_dev.configuration.rule_template;
