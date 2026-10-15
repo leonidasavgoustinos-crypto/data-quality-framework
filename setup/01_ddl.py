@@ -7,6 +7,10 @@
 dbutils.widgets.text("target_environment", "")
 environment = dbutils.widgets.get("target_environment")
 environment = 'dev'
+# By default existing tables (and their history) are kept. Set reset_tables=true only to deliberately
+# recreate every table below: that DELETES all results and configuration.
+dbutils.widgets.dropdown("reset_tables", "false", ["false", "true"])
+create_table = "CREATE OR REPLACE TABLE" if dbutils.widgets.get("reset_tables") == "true" else "CREATE TABLE IF NOT EXISTS"
 name = "analytics_dq_"
 catalog = f"{name}{environment}"
 schemas = ["metadata", "results", "configuration", "quarantine", "reporting"]
@@ -21,7 +25,7 @@ schema = "results"
 
 ###### result ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.result (
+sql_statement = f"""{create_table} {catalog}.{schema}.result (
     result_id   STRING,
     project_id  BIGINT,
     status  STRING,
@@ -42,7 +46,7 @@ except Exception as e:
  
 ###### rule ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.result_rule (
+sql_statement = f"""{create_table} {catalog}.{schema}.result_rule (
     result_rule_id  STRING,
     result_table_id STRING,
     result_id   STRING,
@@ -72,7 +76,7 @@ except Exception as e:
  
 ###### table ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.result_table (
+sql_statement = f"""{create_table} {catalog}.{schema}.result_table (
     result_table_id STRING,
     result_id   STRING,
     table_id    BIGINT,
@@ -97,7 +101,7 @@ schema = "configuration"
 
 ###### apply_at ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.apply_at (
+sql_statement = f"""{create_table} {catalog}.{schema}.apply_at (
     apply_at_id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
     apply_at STRING,
     apply_at_nk STRING generated always as (CONCAT(apply_at, '.', CASE WHEN is_project_specific = TRUE then 'project_specific' else 'project_agnostic' END)),
@@ -117,7 +121,7 @@ except Exception as e:
 
 ###### rule_assignment ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.rule_assignment (
+sql_statement = f"""{create_table} {catalog}.{schema}.rule_assignment (
     rule_assignment_id  BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
     rule_template_id    BIGINT,
     template_nk STRING,
@@ -161,7 +165,7 @@ except Exception as e:
 
 ###### run_policy ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.run_policy (
+sql_statement = f"""{create_table} {catalog}.{schema}.run_policy (
    
     policy_id   BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
     criticality STRING,
@@ -191,7 +195,7 @@ except Exception as e:
  
 ###### rule_template ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.rule_template (
+sql_statement = f"""{create_table} {catalog}.{schema}.rule_template (
     rule_template_id    BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
     name    STRING,
     description STRING,
@@ -220,7 +224,7 @@ schema = "metadata"
 
 ###### table ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.`table` (
+sql_statement = f"""{create_table} {catalog}.{schema}.`table` (
     table_id    BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
     table_nk STRING GENERATED ALWAYS AS (concat(`catalog`, '.', `schema`, '.', `table`)),
     quarantine    STRING GENERATED ALWAYS AS (concat('{catalog}', '.','quarantine','.', `schema`, '_', `table`)),
@@ -248,7 +252,7 @@ except Exception as e:
 
 ###### rule_type ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.rule_type (
+sql_statement = f"""{create_table} {catalog}.{schema}.rule_type (
     rule_type_id    BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
     rule_type_nk string generated always as (rule_type),
     rule_type   STRING,
@@ -268,7 +272,7 @@ except Exception as e:
 
 ###### rule_dimension ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.rule_dimension (
+sql_statement = f"""{create_table} {catalog}.{schema}.rule_dimension (
     rule_dimension_id   BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
     rule_dimension_nk string generated always as (rule_dimension),
     rule_dimension  STRING,
@@ -288,7 +292,7 @@ except Exception as e:
 
 ###### project ######
 
-sql_statement = f"""CREATE OR REPLACE TABLE {catalog}.{schema}.`project` (
+sql_statement = f"""{create_table} {catalog}.{schema}.`project` (
  project_id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
  `project` STRING,
  project_nk STRING GENERATED ALWAYS AS (`project`),
