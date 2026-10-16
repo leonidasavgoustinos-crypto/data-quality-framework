@@ -1,0 +1,37 @@
+--- a/setup/03_reporting_views.py
++++ b/setup/03_reporting_views.py
+@@ -48,7 +48,12 @@
+ # MAGIC   ru.start_timestamp AS start_timestamp_rule,
+ # MAGIC   ru.end_timestamp AS end_timestamp_rule,
+ # MAGIC   rr.start_timestamp AS start_timestamp_execution,
+-# MAGIC   rr.end_timestamp AS end_timestamp_execution
++# MAGIC   rr.end_timestamp AS end_timestamp_execution,
++# MAGIC   rr.result_id,
++# MAGIC   t.result_table_id,
++# MAGIC   ru.result_rule_id,
++# MAGIC   ru.rule_assignment_id,
++# MAGIC   ru.error_message
+ # MAGIC   
+ # MAGIC   FROM analytics_dq_dev.results.result rr
+ # MAGIC   LEFT JOIN analytics_dq_dev.results.result_table t
+@@ -159,7 +164,8 @@
+ # MAGIC     LPAD(FLOOR((TIMESTAMPDIFF(second, start_timestamp_table, end_timestamp_table) / rules_evaluated) / 60), 2, '0')
+ # MAGIC         || ':' ||
+ # MAGIC     LPAD(MOD(CAST(TIMESTAMPDIFF(second, start_timestamp_table, end_timestamp_table) / rules_evaluated AS INTEGER), 60), 2, '0')
+-# MAGIC         AS avg_duration_per_rule
++# MAGIC         AS avg_duration_per_rule,
++# MAGIC     try_divide(TIMESTAMPDIFF(second, start_timestamp_table, end_timestamp_table), rules_evaluated) AS avg_seconds_per_rule
+ # MAGIC FROM analytics_dq_dev.reporting.v_dq_results
+ # MAGIC WHERE tables_evaluated IS NOT NULL
+ # MAGIC   AND status != 'code_error'
+@@ -188,7 +194,9 @@
+ # MAGIC     LPAD(FLOOR((TIMESTAMPDIFF(SECOND, start_timestamp_execution, end_timestamp_execution) / tables_evaluated) / 60), 2, '0')
+ # MAGIC         || ':' ||
+ # MAGIC     LPAD(MOD(CAST(TIMESTAMPDIFF(SECOND, start_timestamp_execution, end_timestamp_execution) / tables_evaluated AS INTEGER), 60), 2, '0')
+-# MAGIC         AS avg_duration_per_table
++# MAGIC         AS avg_duration_per_table,
++# MAGIC     TIMESTAMPDIFF(SECOND, start_timestamp_execution, end_timestamp_execution) AS duration_seconds_for_execution,
++# MAGIC     try_divide(TIMESTAMPDIFF(SECOND, start_timestamp_execution, end_timestamp_execution), tables_evaluated) AS avg_seconds_per_table
+ # MAGIC FROM analytics_dq_dev.reporting.v_dq_results
+ # MAGIC WHERE tables_evaluated IS NOT NULL
+ # MAGIC   AND status != 'code_error'

@@ -1,0 +1,30 @@
+--- a/framework/dq_framework.py
++++ b/framework/dq_framework.py
+@@ -79,7 +79,7 @@
+ 
+     df_filtered = filter_by_filter_field(params, df_input)
+ 
+-    df_filtered.cache()
++    df_filtered = cache_if_supported(df_filtered)
+     
+     df_filtered.count()   
+ 
+--- a/framework/utils.py
++++ b/framework/utils.py
+@@ -362,6 +362,16 @@
+             (F.col("project_nk") == params.meta.project_name)
+         ).select("project_id").collect()[0]["project_id"]
+  
++def cache_if_supported(df):
++    # Serverless compute does not support caching (NOT_SUPPORTED_WITH_SERVERLESS):
++    # continue uncached there; any other error is raised unchanged.
++    try:
++        return df.cache()
++    except Exception as e:
++        if "NOT_SUPPORTED_WITH_SERVERLESS" in str(e):
++            return df
++        raise
++
+ def filter_by_filter_field(params, df_input):
+    
+     if df_input is not None:
