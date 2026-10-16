@@ -9,13 +9,13 @@ include:
 
 # Code: the driver + helpers live in src/driver (synced). The framework is NOT synced from the repo; it is
 # installed from the patched wheel built outside the repo by ../scripts/build_patched.sh (artifact below).
-# Only the driver folder is synced; everything else in the project stays local.
+# Only src/driver is synced. Git-ignored files (__pycache__, dist/, .databricks/) are never synced; the bundle
+# configuration itself is not needed in the workspace.
 sync:
-  include:
-    - src/**
   exclude:
-    - "**/__pycache__/**"
     - src/dashboards/**   # deployed via resources/dq_monitor.dashboard.yml; a synced copy shows up as a 2nd dashboard object
+    - databricks.yml
+    - resources/**
 
 artifacts:
   dq_framework_patched:
