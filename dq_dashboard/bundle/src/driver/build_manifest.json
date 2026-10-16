@@ -1,0 +1,15 @@
+{
+ "wheel": "data_quality_framework-1.1.0+dqd.p01.p02.p03.p04.p07.p08-py3-none-any.whl",
+ "version": "1.1.0+dqd.p01.p02.p03.p04.p07.p08",
+ "sha256": "56dfb4d085a0bda10f4c379645172cab95191327ea38041b86093aec98eea09d",
+ "source_commit": "9c671ac",
+ "patches": [
+  "01_F-21_cache_on_serverless",
+  "02_F-20_stale_ids_in_failure_path",
+  "03_F-01_F-19_F-02_ids_at_open_and_error_message",
+  "04_F-03_on_rule_error_flag",
+  "07_F-22_insert_gate_reads_result_status",
+  "08_V-02_V-04_views_additive_ids_and_seconds"
+ ],
+ "built_at": "2026-09-28T08:43:43+00:00"
+}

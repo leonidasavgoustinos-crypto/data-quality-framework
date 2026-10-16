@@ -1,0 +1,10 @@
+# Lakeview dashboard. Datasets use UNqualified view names (e.g. `v_results_ext`); the bundle
+# resolves them to ${var.dq_catalog}.${var.dashboard_schema}. System tables stay fully qualified.
+resources:
+  dashboards:
+    dq_monitor:
+      display_name: Data Quality Monitor
+      file_path: ../src/dashboards/dq_monitor.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.dq_catalog}
+      dataset_schema: ${var.dashboard_schema}

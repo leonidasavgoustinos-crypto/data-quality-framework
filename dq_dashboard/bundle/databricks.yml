@@ -1,0 +1,110 @@
+# dq_dashboard: environment definition for the "Data Quality Monitor" work.
+# Every script reads its environment from here (src/driver/env_config.py). Switching the
+# whole project to the company workspace means: `--target company`.
+bundle:
+  name: dq_dashboard
+
+include:
+  - resources/*.yml
+
+# Code: the driver + helpers live in src/driver (synced). The framework is NOT synced from the repo; it is
+# installed from the patched wheel built outside the repo by ../scripts/build_patched.sh (artifact below).
+# Only the driver folder is synced; everything else in the project stays local.
+sync:
+  include:
+    - src/**
+  exclude:
+    - "**/__pycache__/**"
+    - src/dashboards/**   # deployed via resources/dq_monitor.dashboard.yml; a synced copy shows up as a 2nd dashboard object
+
+artifacts:
+  dq_framework_patched:
+    type: whl
+    path: .
+    # check_host.sh stops deploy/plan unless the profile's workspace equals expected_host; then the wheel is built
+    # (clean copy -> patches -> local tests -> wheel into ./dist).
+    build: bash ../scripts/check_host.sh "${workspace.profile}" "${var.expected_host}" && bash ../scripts/build_patched.sh
+    files:
+      - source: ./dist/*.whl
+
+variables:
+  expected_host:
+    description: Workspace URL the target must be connected to. Every script aborts before any write if the connected host differs.
+  dq_catalog:
+    description: Catalog of the DQ framework (results/metadata/configuration). Must equal framework/constants.py CATALOG.
+  dashboard_schema:
+    description: Schema (inside dq_catalog) for the helper views, capture tables and *_synthetic tables.
+    default: dq_dashboard
+  warehouse_id:
+    description: SQL warehouse for dashboard datasets and local SQL scripts.
+  cluster_id:
+    description: Existing classic cluster for the driver job (company only; free uses serverless).
+    default: ""
+  sandbox_enabled:
+    description: Allows generated source tables, simulated backfills, fault injection and DROP-based teardown.
+  trace_enabled:
+    description: Observation-only rule_trace wrapper inside the driver (scripts/dq_trace.py).
+  synthetic_enabled:
+    description: Dashboard may read *_synthetic tables. When false, those widgets show a "data not available" text card.
+  simulated_dates_enabled:
+    description: run_calendar maps runs to simulated dates. When false, views use real timestamps only.
+  cache_mode:
+    description: "DataFrame.cache() shim in the driver: auto | off | force_noop (see scripts/cache_shim.py)."
+
+targets:
+  free:
+    default: true
+    mode: development
+    # The host comes from the CLI profile. expected_host and warehouse_id are workspace-specific and are set
+    # locally in .databricks/bundle/free/variable-overrides.json (not committed; see README.md).
+    workspace:
+      profile: DEFAULT
+    variables:
+      dq_catalog: analytics_dq_dev
+      dashboard_schema: dq_dashboard
+      sandbox_enabled: "true"
+      trace_enabled: "true"
+      synthetic_enabled: "true"
+      simulated_dates_enabled: "true"
+      cache_mode: auto
+    resources:
+      jobs:
+        dq_driver:
+          environments:
+            - environment_key: dq
+              spec:
+                environment_version: "3"
+                dependencies:
+                  - databricks-labs-dqx
+                  - ./dist/*.whl
+          tasks:
+            - task_key: driver
+              environment_key: dq
+
+  company:
+    # production mode: no "[dev user]" name prefixes, no dev-only behaviour.
+    mode: production
+    workspace:
+      profile: COMPANY            # not configured yet, see MIGRATION.md step 1
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      expected_host: "<SET: https://<company-workspace>.cloud.databricks.com>"   # env_config refuses placeholders
+      dq_catalog: "<SET: e.g. analytics_dq_prd>"
+      dashboard_schema: dq_dashboard
+      warehouse_id: "<SET: company SQL warehouse id>"
+      cluster_id: "<SET: classic cluster id, or switch the job to serverless as in target free>"
+      sandbox_enabled: "false"
+      trace_enabled: "false"
+      synthetic_enabled: "false"
+      simulated_dates_enabled: "false"
+      cache_mode: auto
+    resources:
+      jobs:
+        dq_driver:
+          tasks:
+            - task_key: driver
+              existing_cluster_id: ${var.cluster_id}
+              libraries:
+                - pypi:
+                    package: databricks-labs-dqx
+                - whl: ./dist/*.whl

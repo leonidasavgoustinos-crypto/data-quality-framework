@@ -1,0 +1,62 @@
+# Driver job. No schedule / trigger: runs only on demand (bundle run). Compute is set per target in databricks.yml (free: serverless env; company: cluster).
+# Environment values are passed as task parameters and parsed by scripts/env_config.py.
+resources:
+  jobs:
+    dq_driver:
+      name: dq_dashboard_driver
+      max_concurrent_runs: 1          # dq_trace is single-threaded; never run two drivers at once
+      parameters:
+        - name: mode                  # backfill (sandbox only) | run (real, current data)
+          default: run
+        - name: start
+          default: ""
+        - name: ndays
+          default: "1"
+        - name: scopes
+          default: ""
+        - name: tables
+          default: ""
+        - name: fault                 # sandbox only
+          default: ""
+        - name: on_rule_error         # raise | continue (framework patch 04)
+          default: continue
+      tasks:
+        - task_key: driver
+          max_retries: 0                # serverless auto-retries failed tasks otherwise; a retry would repeat backfill calls
+          spark_python_task:
+            python_file: ../src/driver/dq_backfill_driver.py
+            parameters:
+              - --target
+              - ${bundle.target}
+              - --expected_host
+              - ${var.expected_host}
+              - --dq_catalog
+              - ${var.dq_catalog}
+              - --dashboard_schema
+              - ${var.dashboard_schema}
+              - --warehouse_id
+              - ${var.warehouse_id}
+              - --sandbox_enabled
+              - ${var.sandbox_enabled}
+              - --trace_enabled
+              - ${var.trace_enabled}
+              - --synthetic_enabled
+              - ${var.synthetic_enabled}
+              - --simulated_dates_enabled
+              - ${var.simulated_dates_enabled}
+              - --cache_mode
+              - ${var.cache_mode}
+              - --mode
+              - "{{job.parameters.mode}}"
+              - --start
+              - "{{job.parameters.start}}"
+              - --ndays
+              - "{{job.parameters.ndays}}"
+              - --scopes
+              - "{{job.parameters.scopes}}"
+              - --tables
+              - "{{job.parameters.tables}}"
+              - --fault
+              - "{{job.parameters.fault}}"
+              - --on_rule_error
+              - "{{job.parameters.on_rule_error}}"
