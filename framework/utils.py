@@ -168,7 +168,8 @@ def close_result(params):
         F.count("*").alias("tables_evaluated"),
         F.count_if(F.col("status") == ERROR).alias("tables_error"),
         F.count_if(F.col("status") == WARNING).alias("tables_warning"),
-        F.count_if(F.col("status") == PASS).alias("tables_pass")
+        F.count_if(F.col("status") == PASS).alias("tables_pass"),
+        F.count_if(F.col("status") == CODE_ERROR).alias("tables_code_error")
     ).collect()[0]
 
     params.result.tables_evaluated = counters["tables_evaluated"]
@@ -176,7 +177,9 @@ def close_result(params):
     params.result.tables_warning = counters["tables_warning"]
     params.result.tables_pass = counters["tables_pass"]
 
-    if params.result.tables_error > 0:
+    if counters["tables_code_error"] > 0:
+        final_status = CODE_ERROR
+    elif params.result.tables_error > 0:
         final_status = ERROR
     elif params.result.tables_warning > 0:
         final_status = WARNING
@@ -213,7 +216,9 @@ def close_result_table(params):
 
     result_table_delta_table = DeltaTable.forName(spark, RESULT_TABLE)
 
-    if params.result.rules_error > 0:
+    if params.result.rules_code_error > 0:
+        final_status = CODE_ERROR
+    elif params.result.rules_error > 0:
         final_status = ERROR
     elif params.result.rules_warning > 0:
         final_status = WARNING
@@ -563,6 +568,7 @@ def load_params_table_info(params, row_table, assignment_pairs):
     params.result.rules_error = 0
     params.result.rules_warning = 0
     params.result.rules_pass = 0
+    params.result.rules_code_error = 0
 
 def load_params_rule_info(params, row_rule):
 

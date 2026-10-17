@@ -5,12 +5,19 @@ from .utils import *
 from .logging import *
 
 
-def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, full_table_name=None, df_input=None, display_logs=None):
+def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, full_table_name=None, df_input=None, display_logs=None, on_rule_error="raise"):
+    # on_rule_error="raise" (default): the first failing rule/table aborts the run and the exception is re-raised
+    #   (callers such as combined_dq_and_df_load.run_dq_and_insert rely on this to stop the pipeline).
+    # on_rule_error="continue": a failing rule/table is recorded as code_error (with error_message) and the
+    #   remaining rules/tables are still evaluated; the execution ends with status code_error and returns normally.
+    if on_rule_error not in ("raise", "continue"):
+        raise ValueError(f"on_rule_error must be 'raise' or 'continue', got {on_rule_error!r}")
 
     try:
         params = RunTimeParams()
 
         load_params_user_input(params, apply_at, filter_values, project_name, full_table_name, run_mode, display_logs)
+        params.config.on_rule_error = on_rule_error
 
         log_start(params)
 
@@ -30,12 +37,17 @@ def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, 
         ]
 
         for table_id in table_ids:
-            _run_dq_for_single_table(
-                table_id,
-                df_active_rules,
-                params,      
-                df_input
-            )
+            try:
+                _run_dq_for_single_table(
+                    table_id,
+                    df_active_rules,
+                    params,
+                    df_input
+                )
+            except Exception as e:
+                if params.config.on_rule_error != "continue":
+                    raise
+                _record_table_failure(params, table_id, e)
 
         close_result(params)
         # close_audit_log(params)
@@ -94,12 +106,20 @@ def _run_dq_for_single_table(table_id, df_active_rules, params, df_input):
     rule_results = []
 
     for rule_assignment_id in rule_assignment_ids:
-        result = _run_single_rule(
-            rule_assignment_id,
-            df_active_rules,
-            params,
-            df_filtered
-        )
+        try:
+            result = _run_single_rule(
+                rule_assignment_id,
+                df_active_rules,
+                params,
+                df_filtered
+            )
+        except Exception as e:
+            if params.config.on_rule_error != "continue":
+                raise
+            params.result.error_message = str(e).replace("'", "''").replace("\n", " ")
+            update_result_rule_execution_failure(params)
+            params.result.rules_code_error += 1
+            continue
         rule_results.append(result)
 
     merge_and_load_quarantine(rule_results, params, load_quarantine)
@@ -136,3 +156,12 @@ def _run_single_rule(rule_assignment_id, df_active_rules, params, df_filtered):
     df_quarantine = prepare_quarantine_rows(params, df_errors)
 
     return (rule_assignment_id, df_quarantine)
+
+
+def _record_table_failure(params, table_id, e):
+    # on_rule_error="continue": a table-level failure (e.g. reading the source) becomes a code_error table row
+    params.result.error_message = str(e).replace("'", "''").replace("\n", " ")
+    if params.result.result_table_id is None:
+        params.meta.table_id = table_id
+        open_result_table(params)
+    update_result_table_execution_failure(params)

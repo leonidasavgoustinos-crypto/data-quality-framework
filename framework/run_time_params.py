@@ -38,6 +38,7 @@ class Config:
     filter_values: Any = None
     rule_name: Any = None
     quarantine_flag: bool = None
+    on_rule_error: str = "raise"
 
 @dataclass
 class Result:
@@ -49,6 +50,7 @@ class Result:
     rules_error: int = 0
     rules_warning: int = 0
     rules_pass: int = 0
+    rules_code_error: int = 0
     rows_evaluated: int = 0
     rows_failed: int = 0
     rows_pass:int = 0
