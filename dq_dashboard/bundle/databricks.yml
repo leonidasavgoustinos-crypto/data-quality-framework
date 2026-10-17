@@ -81,6 +81,86 @@ targets:
             - task_key: driver
               environment_key: dq
 
+        # Sandbox-only parallel backfill: 4 independent tasks (no depends_on), one per group of (apply_at, project)
+        # scopes whose tables are disjoint, so no two tasks touch the same source table, quarantine table or
+        # columns_snapshot rows. Trace is off (the framework writes ids at open time since patch 03), and only
+        # t1 snapshots the config history. A failed task does not stop the others; repair the run to rerun it.
+        # Do not run dq_driver while this job runs.
+        dq_backfill_parallel:
+          name: dq_dashboard_backfill_parallel
+          max_concurrent_runs: 1
+          parameters:
+            - name: start
+              default: ""
+            - name: ndays
+              default: "7"
+            - name: on_rule_error
+              default: continue
+          environments:
+            - environment_key: dq
+              spec:
+                environment_version: "3"
+                dependencies:
+                  - databricks-labs-dqx
+                  - ./dist/*.whl
+          tasks:
+            - task_key: t1_bronze_fs             # bronze, gold/project_2, bronze_to_fs, fs: 23 tables (4, 7, 10, 15 are shared by these scopes, so they stay together)
+              environment_key: dq
+              max_retries: 0
+              spark_python_task:
+                python_file: src/driver/dq_backfill_driver.py
+                parameters: [--target, "${bundle.target}", --expected_host, "${var.expected_host}",
+                             --dq_catalog, "${var.dq_catalog}", --dashboard_schema, "${var.dashboard_schema}",
+                             --warehouse_id, "${var.warehouse_id}", --sandbox_enabled, "${var.sandbox_enabled}",
+                             --trace_enabled, "false", --synthetic_enabled, "${var.synthetic_enabled}",
+                             --simulated_dates_enabled, "${var.simulated_dates_enabled}", --cache_mode, "${var.cache_mode}",
+                             --mode, backfill, --start, "{{job.parameters.start}}", --ndays, "{{job.parameters.ndays}}",
+                             --on_rule_error, "{{job.parameters.on_rule_error}}", --snapshot_config, "true",
+                             --scopes, "bronze|,gold|project_2,bronze_to_fs|,fs|",
+                             --tables, "3,4,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,27,28,29"]
+            - task_key: t2_bronze_to_gold             # bronze_to_gold/sas2py: 7 tables
+              environment_key: dq
+              max_retries: 0
+              spark_python_task:
+                python_file: src/driver/dq_backfill_driver.py
+                parameters: [--target, "${bundle.target}", --expected_host, "${var.expected_host}",
+                             --dq_catalog, "${var.dq_catalog}", --dashboard_schema, "${var.dashboard_schema}",
+                             --warehouse_id, "${var.warehouse_id}", --sandbox_enabled, "${var.sandbox_enabled}",
+                             --trace_enabled, "false", --synthetic_enabled, "${var.synthetic_enabled}",
+                             --simulated_dates_enabled, "${var.simulated_dates_enabled}", --cache_mode, "${var.cache_mode}",
+                             --mode, backfill, --start, "{{job.parameters.start}}", --ndays, "{{job.parameters.ndays}}",
+                             --on_rule_error, "{{job.parameters.on_rule_error}}", --snapshot_config, "false",
+                             --scopes, "bronze_to_gold|sas2py",
+                             --tables, "30,31,32,33,34,35,36"]
+            - task_key: t3_fs_to_gold             # fs_to_gold/sas2py: 8 tables
+              environment_key: dq
+              max_retries: 0
+              spark_python_task:
+                python_file: src/driver/dq_backfill_driver.py
+                parameters: [--target, "${bundle.target}", --expected_host, "${var.expected_host}",
+                             --dq_catalog, "${var.dq_catalog}", --dashboard_schema, "${var.dashboard_schema}",
+                             --warehouse_id, "${var.warehouse_id}", --sandbox_enabled, "${var.sandbox_enabled}",
+                             --trace_enabled, "false", --synthetic_enabled, "${var.synthetic_enabled}",
+                             --simulated_dates_enabled, "${var.simulated_dates_enabled}", --cache_mode, "${var.cache_mode}",
+                             --mode, backfill, --start, "{{job.parameters.start}}", --ndays, "{{job.parameters.ndays}}",
+                             --on_rule_error, "{{job.parameters.on_rule_error}}", --snapshot_config, "false",
+                             --scopes, "fs_to_gold|sas2py",
+                             --tables, "25,26,37,38,39,40,41,42"]
+            - task_key: t4_test             # test, test_test: 2 tables
+              environment_key: dq
+              max_retries: 0
+              spark_python_task:
+                python_file: src/driver/dq_backfill_driver.py
+                parameters: [--target, "${bundle.target}", --expected_host, "${var.expected_host}",
+                             --dq_catalog, "${var.dq_catalog}", --dashboard_schema, "${var.dashboard_schema}",
+                             --warehouse_id, "${var.warehouse_id}", --sandbox_enabled, "${var.sandbox_enabled}",
+                             --trace_enabled, "false", --synthetic_enabled, "${var.synthetic_enabled}",
+                             --simulated_dates_enabled, "${var.simulated_dates_enabled}", --cache_mode, "${var.cache_mode}",
+                             --mode, backfill, --start, "{{job.parameters.start}}", --ndays, "{{job.parameters.ndays}}",
+                             --on_rule_error, "{{job.parameters.on_rule_error}}", --snapshot_config, "false",
+                             --scopes, "test|,test_test|",
+                             --tables, "1,2"]
+
   company:
     # production mode: no "[dev user]" name prefixes, no dev-only behaviour.
     mode: production

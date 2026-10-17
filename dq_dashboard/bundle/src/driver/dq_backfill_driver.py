@@ -158,13 +158,19 @@ def snapshot_config_history():
 
 
 def snapshot_columns(d, tables):
+    """Columns of this task's tables for day d. Checked per (day, table), so parallel tasks with disjoint tables each
+    snapshot their own tables. The INSERT reads only information_schema (blind append, no conflict with other tasks)."""
     if not tables or not has("columns_snapshot"):
         return
-    if spark.sql(f"SELECT 1 FROM {SB}.columns_snapshot WHERE simulated_date <=> {sql_date(d)} LIMIT 1").count():
+    done = {(r[0], r[1], r[2].lower()) for r in spark.sql(
+        f"SELECT DISTINCT table_catalog, table_schema, table_name FROM {SB}.columns_snapshot "
+        f"WHERE simulated_date <=> {sql_date(d)}").collect()}
+    todo = [t for t in tables if (t["catalog"], t["schema"], t["table"].lower()) not in done]
+    if not todo:
         return
     conds = " OR ".join(
         f"(table_catalog = '{t['catalog']}' AND table_schema = '{t['schema']}' AND lower(table_name) = lower('{t['table']}'))"
-        for t in tables)
+        for t in todo)
     spark.sql(f"""INSERT INTO {SB}.columns_snapshot
         SELECT {sql_date(d)}, table_catalog, table_schema, table_name, column_name, full_data_type, ordinal_position
         FROM system.information_schema.columns WHERE {conds}""")
@@ -355,6 +361,8 @@ def main():
     ap.add_argument("--tables", default="")
     ap.add_argument("--fault", default="")
     ap.add_argument("--on_rule_error", choices=("raise", "continue"), default="continue")
+    ap.add_argument("--snapshot_config", choices=("true", "false"), default="true",
+                    help="MERGE config DESCRIBE HISTORY into config_history_snapshot; parallel jobs enable it in one task only")
     a = ap.parse_args(REST)
     global ON_RULE_ERROR
     ON_RULE_ERROR = a.on_rule_error
@@ -376,7 +384,8 @@ def main():
     log(phase, f"build {json.dumps(build_info())}")
     log(phase, f"driver_hash {json.dumps(code_hashes())}")
     print("recovered trace rows merged:", load_trace_files(os.path.join(ENV.trace_dir, "*", "*.json")))
-    snapshot_config_history()
+    if a.snapshot_config == "true":
+        snapshot_config_history()
 
     tables = []
     if a.tables:
