@@ -74,15 +74,19 @@ def run_dq_and_insert(
         df_input=df_input,
         display_logs=display_logs
     )
+    # F-22: gate on this run's own row in results.result (run_data_quality returns its result_id).
+    # The audit log is not written (open/close_audit_log are commented out) and is keyed by a different id.
+    # Only 'pass' lets the insert through, as close_audit_log did ("completed" only when the status is pass).
     dq_status = (
-        spark.table(f"analytics_audit.{env}.processing_job_status")
+        spark.table(f"analytics_dq_{env}.results.result")
              .select("status")
-             .where(f"job_id = '{job_id}'")
+             .where(f"result_id = '{job_id}'")
              .collect()
     )
 
-    if dq_status and dq_status[0]["status"] == "failed":
-        dbutils.notebook.exit(f"❌ Data Quality failed for table {full_table_name}. Insert skipped.")
+    if not dq_status or dq_status[0]["status"] != "pass":
+        status = dq_status[0]["status"] if dq_status else "missing"
+        dbutils.notebook.exit(f"❌ Data Quality failed for table {full_table_name} (status: {status}). Insert skipped.")
 
     print(f"✅ Data Quality passed for table {full_table_name}. Proceeding with insert.")
 
