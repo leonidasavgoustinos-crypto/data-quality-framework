@@ -362,6 +362,16 @@ def get_project_id(params):
             (F.col("project_nk") == params.meta.project_name)
         ).select("project_id").collect()[0]["project_id"]
  
+def cache_if_supported(df):
+    # Serverless compute does not support caching (NOT_SUPPORTED_WITH_SERVERLESS):
+    # continue uncached there; any other error is raised unchanged.
+    try:
+        return df.cache()
+    except Exception as e:
+        if "NOT_SUPPORTED_WITH_SERVERLESS" in str(e):
+            return df
+        raise
+
 def filter_by_filter_field(params, df_input):
    
     if df_input is not None:

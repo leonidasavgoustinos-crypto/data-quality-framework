@@ -79,7 +79,7 @@ def _run_dq_for_single_table(table_id, df_active_rules, params, df_input):
 
     df_filtered = filter_by_filter_field(params, df_input)
 
-    df_filtered.cache()
+    df_filtered = cache_if_supported(df_filtered)
     
     df_filtered.count()   
 
