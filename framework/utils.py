@@ -75,6 +75,7 @@ def update_result_rule_execution_failure(params):
         ),
         set = {
             "status": F.lit(CODE_ERROR),
+            "error_message": F.lit(params.result.error_message),
             "end_timestamp": F.current_timestamp()
         }
     ) 
@@ -140,14 +141,21 @@ def close_audit_log(params):
     )
 
 
+def _sql_value(v):
+    if v is None:
+        return "NULL"
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return str(v)
+    return sql_literal(v)
+
 def open_result(params):
 
     params.result.result_id = str(uuid.uuid4())
 
     result_delta_table = DeltaTable.forName(spark, RESULT)
 
-    spark.sql(f"""INSERT INTO {RESULT} (result_id, status, start_timestamp)
-                  VALUES ('{params.result.result_id}', '{RUNNING}', current_timestamp())""")
+    spark.sql(f"""INSERT INTO {RESULT} (result_id, project_id, status, start_timestamp)
+                  VALUES ('{params.result.result_id}', {_sql_value(params.meta.project_id)}, '{RUNNING}', current_timestamp())""")
 
 def close_result(params):
 
@@ -195,8 +203,10 @@ def open_result_table(params):
 
     result_delta_table = DeltaTable.forName(spark, RESULT_TABLE)
 
-    spark.sql(f"""INSERT INTO {RESULT_TABLE} (result_table_id, status, start_timestamp)
-                  VALUES ('{params.result.result_table_id}', '{RUNNING}', current_timestamp())""")
+    spark.sql(f"""INSERT INTO {RESULT_TABLE} (result_table_id, result_id, table_id, project_id, status, start_timestamp)
+                  VALUES ('{params.result.result_table_id}', {_sql_value(params.result.result_id)},
+                          {_sql_value(params.meta.table_id)}, {_sql_value(params.meta.project_id)},
+                          '{RUNNING}', current_timestamp())""")
 
 
 def close_result_table(params):
@@ -234,8 +244,13 @@ def open_result_rule(params):
 
     result_rule_delta_table = DeltaTable.forName(spark, RESULT_RULE)
 
-    spark.sql(f"""INSERT INTO {RESULT_RULE} (result_rule_id, status, start_timestamp)
-                  VALUES ('{params.result.result_rule_id}', '{RUNNING}', current_timestamp())""")
+    spark.sql(f"""INSERT INTO {RESULT_RULE} (result_rule_id, result_table_id, result_id, project_id,
+                  rule_assignment_id, policy_id, rule_type_id, rule_dimension_id, status, start_timestamp)
+                  VALUES ('{params.result.result_rule_id}', {_sql_value(params.result.result_table_id)},
+                          {_sql_value(params.result.result_id)}, {_sql_value(params.meta.project_id)},
+                          {_sql_value(params.config.rule_assignment_id)}, {_sql_value(params.config.policy_id)},
+                          {_sql_value(params.meta.rule_type_id)}, {_sql_value(params.meta.rule_dimension_id)},
+                          '{RUNNING}', current_timestamp())""")
 
 
 def close_result_rule(params):
@@ -261,7 +276,7 @@ def close_result_rule(params):
             "rule_assignment_id": F.lit(params.config.rule_assignment_id),
             "rule_type_id": F.lit(params.meta.rule_type_id),
             "policy_id": F.lit(params.config.policy_id),
-            "rule_type_id": F.lit(params.meta.rule_type_id)
+            "rule_dimension_id": F.lit(params.meta.rule_dimension_id)
         }
     )
 
