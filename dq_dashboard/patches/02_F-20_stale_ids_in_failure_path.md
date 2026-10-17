@@ -1,4 +1,4 @@
-# 02 · F-20: failure path overwrites already-closed rows (High)
+# 02 · F-20: failure path overwrites already-closed rows (High) · status: applied on the feature branch (`d0abcb7`)
 
 **Root cause**: `params.result.result_table_id` / `result_rule_id` keep the ids of the **previous** table/rule after they are closed.
 When a later table crashes before `open_result_table` (e.g. a missing source in `filter_by_filter_field`), or before its first

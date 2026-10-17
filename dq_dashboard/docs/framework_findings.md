@@ -1,6 +1,6 @@
 # Framework findings
 
-Found by reading the repo (`..`, branch feature/anr) and inspecting the DEFAULT workspace on 2026-10-15. **The repo was not modified.** Severity: High = wrong or missing data in reporting; Med = feature gap or fragile behaviour; Low = cosmetic or edge case.
+Found by reading the repo (`..`, feature branch) and inspecting the DEFAULT workspace on 2026-10-15. **The repo was not modified.** Severity: High = wrong or missing data in reporting; Med = feature gap or fragile behaviour; Low = cosmetic or edge case.
 
 | ID | Sev | Where | Finding | Suggested fix |
 |---|---|---|---|---|

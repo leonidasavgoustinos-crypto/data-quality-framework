@@ -103,5 +103,6 @@ python3 -I dq_dashboard/tests/test_driver_call_status.py --driver dq_dashboard/b
 cd dq_dashboard/patches/tests && python3 -I test_framework_patches.py --framework <repo copy> --stage 04
 ```
 
-## Applying the fixes to the repo
-See `patches/APPLY_AT_END.md` for the order, commands and checks. After that, build with `PATCHES=""`.
+## Framework fixes
+All fixes in `patches/` are applied on the feature branch. `patches/APPLY_AT_END.md` lists the commits and the
+checks that the branch code equals the sandbox wheel. Merging to `main` is a separate, optional step.

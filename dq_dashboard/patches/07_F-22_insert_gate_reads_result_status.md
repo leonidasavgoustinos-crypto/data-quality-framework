@@ -1,4 +1,4 @@
-# 07 · F-22: `run_dq_and_insert` inserts even when error-level rules fail (High) · status: needs colleague OK
+# 07 · F-22: `run_dq_and_insert` inserts even when error-level rules fail (High) · status: applied on the feature branch (`09a098b`)
 
 **Confirmed by code trace** (repo at 9c671ac):
 1. `framework/combined_dq_and_df_load.py:69-76` calls `run_data_quality(...)` and stores the return value as `job_id`.

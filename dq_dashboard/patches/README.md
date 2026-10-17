@@ -1,21 +1,21 @@
 # Framework patches
 
-**Do not apply now.** Nothing is applied to the repo or committed until the end of the project (see **APPLY_AT_END.md**
-for the order, commands and commit split). Meanwhile the sandbox runs a wheel built from a patched COPY
-(`../scripts/build_patched.sh`).
+All patches are applied on the feature branch (commits listed in **APPLY_AT_END.md**). Merging to `main` is a separate,
+optional step. The sandbox wheel is still built from `9c671ac` plus the patches (`../scripts/build_patched.sh`), which
+gives the same framework code as the branch.
 
 | # | Finding | Files | Default behaviour change | Sandbox build | Status |
 |---|---|---|---|---|---|
-| 01 | F-21 cache on serverless (Blocker) | framework/utils.py, dq_framework.py | none on classic; serverless works uncached | yes | 🟡 |
-| 02 | F-20 stale ids in failure path (High) | framework/utils.py, dq_framework.py | failure path only | yes | 🟡 |
-| 03 | F-01/F-19/F-02 ids at open + error_message (High) | framework/utils.py | failed rows carry ids + message | yes | 🟡 |
-| 04 | F-03 opt-in `on_rule_error` (High) | framework/dq_framework.py, utils.py, run_time_params.py | none (`raise` default) | yes | 🟡 |
-| 05 | F-13 setup keeps tables (Med) | setup/01_ddl.py | **yes**: rerun no longer recreates | no | 🟡 committed in 72e3a0c |
-| 06 | C-01 guard before TRUNCATE (High) | configuration/dataset_creation.ipynb | demo needs confirmation | no | 🟡 committed in 72e3a0c |
-| 07 | F-22 insert gate reads results.result (High) | framework/combined_dq_and_df_load.py | **yes**: gate now blocks non-pass | yes | 🟡 |
-| 08 | V-02/V-04 views additive (Med) | setup/03_reporting_views.py | none (columns added at the end) | yes | 🟡 |
+| 01 | F-21 cache on serverless (Blocker) | framework/utils.py, dq_framework.py | none on classic; serverless works uncached | yes | ✅ `60348c2` |
+| 02 | F-20 stale ids in failure path (High) | framework/utils.py, dq_framework.py | failure path only | yes | ✅ `d0abcb7` |
+| 03 | F-01/F-19/F-02 ids at open + error_message (High) | framework/utils.py | failed rows carry ids + message | yes | ✅ `38b3051` |
+| 04 | F-03 opt-in `on_rule_error` (High) | framework/dq_framework.py, utils.py, run_time_params.py | none (`raise` default) | yes | ✅ `c221144` |
+| 05 | F-13 setup keeps tables (Med) | setup/01_ddl.py | **yes**: rerun no longer recreates | no | ✅ `72e3a0c` |
+| 06 | C-01 guard before TRUNCATE (High) | configuration/dataset_creation.ipynb | demo needs confirmation | no | ✅ `72e3a0c` |
+| 07 | F-22 insert gate reads results.result (High) | framework/combined_dq_and_df_load.py | **yes**: gate now blocks non-pass | yes | ✅ `09a098b` |
+| 08 | V-02/V-04 views additive (Med) | setup/03_reporting_views.py | none (columns added at the end) | yes | ✅ `a526ee6` |
 
-Order and commands: **APPLY_AT_END.md**. Sandbox build: `scripts/build_patched.sh` (`PATCHES="01 02 03 04 07 08"` by default).
+Commits and checks: **APPLY_AT_END.md**. Sandbox build: `scripts/build_patched.sh` (`PATCHES="01 02 03 04 07 08"` by default).
 Current sandbox wheel (base `9c671ac`): sha256 `56dfb4d085a0bda10f4c379645172cab95191327ea38041b86093aec98eea09d` (content identical to the pilot-verified build except a comment line in _build_info.py).
 
 ## Tests (no Databricks needed)

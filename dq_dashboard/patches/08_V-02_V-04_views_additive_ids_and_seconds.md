@@ -1,4 +1,4 @@
-# 08 · V-02 / V-04: reporting views, additive ids + numeric durations (Med) · status: needs colleague OK
+# 08 · V-02 / V-04: reporting views, additive ids + numeric durations (Med) · status: applied on the feature branch (`a526ee6`)
 
 **Root cause**: `v_dq_results` exposes no ids, so you can't tell the latest run, a rule assignment's history, or whether a row
 is a code_error. The performance views give durations only as `mm:ss` strings, which can't be charted or averaged.

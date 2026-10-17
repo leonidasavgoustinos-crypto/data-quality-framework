@@ -1,4 +1,4 @@
-# 03 · F-01 / F-19 / F-02: ids written at open time, error_message stored (High)
+# 03 · F-01 / F-19 / F-02: ids written at open time, error_message stored (High) · status: applied on the feature branch (`38b3051`)
 
 **Root cause**: `open_result_table` / `open_result_rule` (`utils.py:180-188`, `:219-227`) insert only the row id, status and
 start time. All foreign keys are written in `close_*`. A rule/table that fails therefore keeps `result_id`, `result_table_id`,

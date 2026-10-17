@@ -1,4 +1,4 @@
-# 01 · F-21: `cache()` aborts every run on serverless (Blocker)
+# 01 · F-21: `cache()` aborts every run on serverless (Blocker) · status: applied on the feature branch (`60348c2`)
 
 **Root cause**: `framework/dq_framework.py:83` calls `df_filtered.cache()`. On serverless compute this raises
 `[NOT_SUPPORTED_WITH_SERVERLESS] PERSIST TABLE is not supported on serverless compute`. The exception reaches the run-level

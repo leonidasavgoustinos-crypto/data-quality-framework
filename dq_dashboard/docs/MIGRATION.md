@@ -57,9 +57,9 @@ The framework is installed as a wheel by the bundle; it is never copied into the
 - [ ] Do **not** run `01_sources.sql` / `03_sandbox.sql`; they are refused anyway.
 
 ## 5. Deploy
-- [ ] Framework wheel: once the patches are applied to the repo (`patches/APPLY_AT_END.md`), the wheel must be built from the repo as it is, with no patches on top, so set `PATCHES=""` for the build and the deploy (the default set would no longer apply). The repo working tree must be clean.
-- [ ] `PATCHES="" bash scripts/build_patched.sh`, then check `bundle/src/driver/build_manifest.json`: version, sha256 and `source_commit` are the ones you expect.
-- [ ] `cd bundle && PATCHES="" databricks bundle deploy -t company`. The artifact rebuilds the same wheel, deploy uploads it with the driver, and the job installs it on `cluster_id`. Production mode: no `[dev …]` prefixes; the dashboard is published as "Data Quality Monitor".
+- [ ] Framework wheel: the fixes are committed on the feature branch (`patches/APPLY_AT_END.md`). The build still applies the default patch set to `BASE_COMMIT` `9c671ac`, which gives the same framework code as the branch. Building from the branch itself (`PATCHES=""` on a later base) is not supported yet: the build's local tests then expect an unpatched base and fail. Everything outside `dq_dashboard/` must be committed (the build checks this).
+- [ ] `bash scripts/build_patched.sh` (defaults), then check `bundle/src/driver/build_manifest.json`: version, sha256 and `source_commit` (`9c671ac`) are the ones you expect.
+- [ ] `cd bundle && databricks bundle deploy -t company`. The artifact rebuilds the same wheel, deploy uploads it with the driver, and the job installs it on `cluster_id`. Production mode: no `[dev …]` prefixes; the dashboard is published as "Data Quality Monitor".
 - [ ] Optional: `databricks bundle run dq_driver -t company --params mode=run,scopes=<apply_at|project,...>`. Real runs only; capture rows are observed data.
 
 ## 6. Verify

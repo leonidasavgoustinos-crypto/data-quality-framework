@@ -1,26 +1,26 @@
 # Framework findings: status for review
 
-Repo `data-quality-framework` @ `9c671ac` (branch feature/anr). Details, file:line and evidence: `framework_findings.md`.
-Patches: `patches/` (one `.diff` + `.md` each, local tests in `patches/tests/`). Patches 05/06 are already committed on feature/anr (`72e3a0c`, not merged);
-the rest is applied together at the end (`patches/APPLY_AT_END.md`).
+Repo `data-quality-framework`, feature branch (findings made at `9c671ac`). Details, file:line and evidence: `framework_findings.md`.
+Patches: `../patches/` (one `.diff` + `.md` each, local tests in `../patches/tests/`). All patches are applied on
+the feature branch; commits in `../patches/APPLY_AT_END.md`. Merging to `main` is a separate, optional step.
 
-Status: 🟡 patch written, waiting for your review/OK · 🔴 open, your decision (no patch yet) · ⚪ informational
+Status: ✅ fixed on the feature branch (commit) · 🔴 open, your decision (no patch yet) · ⚪ informational
 
-## Patched (🟡)
+## Fixed on the feature branch (✅)
 | ID | Sev | Finding (one line) | Patch | Status |
 |---|---|---|---|---|
-| F-21 | Blocker | `df.cache()` raises on serverless, so no rule runs at all | 01 | 🟡 |
-| F-20 | High | crash before a table/rule opens overwrites the *previous* closed rows as `code_error` (reproduced on Databricks) | 02 | 🟡 |
-| F-01 | High | failed rows have no `result_id`/`table_id`/`rule_assignment_id` and are invisible in `v_dq_results` | 03 | 🟡 |
-| F-19 | High | ids are written only on close; should be written on open | 03 | 🟡 |
-| F-02 | High | `error_message`, `rule_dimension_id` never written (`alert`/`alert_id` still not, see 🔴) | 03 | 🟡 |
-| F-15 | Low | duplicate `rule_type_id` key in `close_result_rule` (should be `rule_dimension_id`) | 03 | 🟡 |
-| F-03 | High | first failing rule aborts the whole run. **Default unchanged** (`raise`; `run_dq_and_insert` relies on it); new opt-in `on_rule_error="continue"` | 04 | 🟡 |
-| F-22 | High | `run_dq_and_insert` inserts even when error rules fail (gate reads an audit table that is never written, by the wrong id). Question: should `warning` block too? | 07 | 🟡 |
-| V-02 | Med | `v_dq_results` has no id columns → added (additive only) | 08 | 🟡 |
-| V-04 | Med | perf views have `mm:ss` strings only → numeric seconds added next to them (the GROUP BY collapse remains, see 🔴) | 08 | 🟡 |
-| F-13 | Med | setup `CREATE OR REPLACE` wipes results/config on rerun → `IF NOT EXISTS` + explicit `reset_tables=true` | 05 | 🟡 committed in `72e3a0c` on feature/anr, waiting for your OK before merge |
-| C-01 | High | demo notebook TRUNCATEs config tables without warning → confirmation guard | 06 | 🟡 committed in `72e3a0c` on feature/anr, waiting for your OK before merge |
+| F-21 | Blocker | `df.cache()` raises on serverless, so no rule runs at all | 01 | ✅ `60348c2` |
+| F-20 | High | crash before a table/rule opens overwrites the *previous* closed rows as `code_error` (reproduced on Databricks) | 02 | ✅ `d0abcb7` |
+| F-01 | High | failed rows have no `result_id`/`table_id`/`rule_assignment_id` and are invisible in `v_dq_results` | 03 | ✅ `38b3051` |
+| F-19 | High | ids are written only on close; should be written on open | 03 | ✅ `38b3051` |
+| F-02 | High | `error_message`, `rule_dimension_id` never written (`alert`/`alert_id` still not, see 🔴) | 03 | ✅ `38b3051` |
+| F-15 | Low | duplicate `rule_type_id` key in `close_result_rule` (should be `rule_dimension_id`) | 03 | ✅ `38b3051` |
+| F-03 | High | first failing rule aborts the whole run. **Default unchanged** (`raise`; `run_dq_and_insert` relies on it); new opt-in `on_rule_error="continue"` | 04 | ✅ `c221144` |
+| F-22 | High | `run_dq_and_insert` inserts even when error rules fail (gate reads an audit table that is never written, by the wrong id). Question: should `warning` block too? | 07 | ✅ `09a098b` |
+| V-02 | Med | `v_dq_results` has no id columns → added (additive only) | 08 | ✅ `a526ee6` |
+| V-04 | Med | perf views have `mm:ss` strings only → numeric seconds added next to them (the GROUP BY collapse remains, see 🔴) | 08 | ✅ `a526ee6` |
+| F-13 | Med | setup `CREATE OR REPLACE` wipes results/config on rerun → `IF NOT EXISTS` + explicit `reset_tables=true` | 05 | ✅ `72e3a0c` |
+| C-01 | High | demo notebook TRUNCATEs config tables without warning → confirmation guard | 06 | ✅ `72e3a0c` |
 
 ## Open: your decision (🔴, no patch)
 | ID | Sev | Finding | Suggested fix (one line) |

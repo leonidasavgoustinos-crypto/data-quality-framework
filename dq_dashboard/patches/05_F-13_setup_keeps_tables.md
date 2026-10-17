@@ -1,4 +1,4 @@
-# 05 · F-13: rerunning setup wipes results and configuration (Med) · status: needs colleague OK
+# 05 · F-13: rerunning setup wipes results and configuration (Med) · status: applied on the feature branch (`72e3a0c`)
 
 **Root cause**: `setup/01_ddl.py` creates all 11 tables with `CREATE OR REPLACE TABLE` (results at :24/:45/:75, configuration and
 metadata at :100–:291). Rerunning setup, e.g. to add a column, silently deletes every result (the history the dashboard shows)
@@ -9,7 +9,7 @@ and all configuration.
 
 **Behaviour change: yes, deliberately.** A default rerun no longer recreates tables. Whoever relied on "rerun setup = clean slate
 / apply schema changes" must now set `reset_tables=true` (or use `00_drop_catalog.py`). Schema changes to existing tables then
-need an explicit `ALTER TABLE` or a reset. **Needs the colleague's OK.**
+need an explicit `ALTER TABLE` or a reset.
 Not changed: the hard-coded `environment = 'dev'` at :9, which overrides the widget (separate Low issue, listed 🔴).
 
 **Tests** (`tests/test_other_patches.py`): "setup default keeps existing tables" (fails before, passes after) and

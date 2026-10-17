@@ -1,4 +1,4 @@
-# 04 · F-03: one failing rule aborts the whole run → opt-in `on_rule_error` (High)
+# 04 · F-03: one failing rule aborts the whole run → opt-in `on_rule_error` (High) · status: applied on the feature branch (`c221144`)
 
 **Root cause / intent**: `run_data_quality` re-raises on the first failure (`dq_framework.py:49-56`). Remaining rules and tables
 are skipped and `close_result` never runs. **This abort is relied upon**: `combined_dq_and_df_load.run_dq_and_insert`
