@@ -59,6 +59,10 @@ def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, 
 
 
 def _run_dq_for_single_table(table_id, df_active_rules, params, df_input):
+
+    # ids of the previous (already closed) table/rule must not be reused by the failure path
+    params.result.result_table_id = None
+    params.result.result_rule_id = None
     
     row_table = df_active_rules.filter(
         F.col("table_id") == table_id
@@ -106,6 +110,8 @@ def _run_dq_for_single_table(table_id, df_active_rules, params, df_input):
 
 
 def _run_single_rule(rule_assignment_id, df_active_rules, params, df_filtered):
+
+    params.result.result_rule_id = None
 
     row_rule = df_active_rules.filter(
         F.col("rule_assignment_id") == rule_assignment_id

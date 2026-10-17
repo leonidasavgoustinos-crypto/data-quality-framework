@@ -27,11 +27,15 @@ def update_audit_log_failure(params):
  
 def update_result_execution_failure(params):
 
+    if params.result.result_id is None:
+        return
+
     result_execution_failure_delta_table = DeltaTable.forName(spark, RESULT)
 
     result_execution_failure_delta_table.update(
         condition = (
-            (F.col("result_id") == params.result.result_id)
+            (F.col("result_id") == params.result.result_id) &
+            (F.col("status") == RUNNING)
         ),
         set = {
             "status": F.lit(CODE_ERROR),
@@ -41,11 +45,15 @@ def update_result_execution_failure(params):
 
 def update_result_table_execution_failure(params):
 
+    if params.result.result_table_id is None:
+        return
+
     result_table_execution_failure_delta_table = DeltaTable.forName(spark, RESULT_TABLE)
 
     result_table_execution_failure_delta_table.update(
         condition = (
-            (F.col("result_table_id") == params.result.result_table_id)
+            (F.col("result_table_id") == params.result.result_table_id) &
+            (F.col("status") == RUNNING)
         ),
         set = {
             "status": F.lit(CODE_ERROR),
@@ -55,11 +63,15 @@ def update_result_table_execution_failure(params):
  
 def update_result_rule_execution_failure(params):
 
+    if params.result.result_rule_id is None:
+        return
+
     result_rule_execution_failure_delta_table = DeltaTable.forName(spark, RESULT_RULE)
 
     result_rule_execution_failure_delta_table.update(
         condition = (
-            (F.col("result_rule_id") == params.result.result_rule_id)
+            (F.col("result_rule_id") == params.result.result_rule_id) &
+            (F.col("status") == RUNNING)
         ),
         set = {
             "status": F.lit(CODE_ERROR),
