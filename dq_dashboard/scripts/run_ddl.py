@@ -6,8 +6,8 @@ Guards (abort before the first statement):
   * the CLI profile must point at the target's expected_host;
   * a file marked `-- @sandbox_only` requires sandbox_enabled=true;
   * a file whose `-- @targets:` line does not list the target is refused;
-  * only CREATE <CATALOG|SCHEMA|TABLE|VOLUME> ... IF NOT EXISTS is executed. Anything else is refused,
-    so this runner can never REPLACE, DROP or ALTER an existing object.
+  * only CREATE <CATALOG|SCHEMA|TABLE|VOLUME|VIEW> ... IF NOT EXISTS is executed. Anything else is refused,
+    so this runner can never REPLACE, DROP or ALTER an existing object (an existing view is left as it is).
 Placeholders ({{dq_catalog}}, ...) are rendered by env_config; unresolved ones abort.
 """
 import argparse
@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bundle", "src", "driver"))
 import env_config  # noqa: E402
 
-ALLOWED = re.compile(r"(?is)^create\s+(catalog|schema|table|volume)\s+if\s+not\s+exists\s")
+ALLOWED = re.compile(r"(?is)^create\s+(catalog|schema|table|volume|view)\s+if\s+not\s+exists\s")
 
 
 def main():

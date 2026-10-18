@@ -16,7 +16,8 @@ Guards (raise GuardError, never warn-and-continue)
   env.require_simulated_dates(a)    simulated_dates_enabled must be true
   env.assert_host(actual_host)      connected workspace must equal expected_host
 Templates
-  env.render(text)                  replaces {{dq_catalog}}, {{dashboard_schema}}, {{warehouse_id}}, {{target}};
+  env.render(text)                  replaces {{dq_catalog}}, {{dashboard_schema}}, {{warehouse_id}}, {{target}}
+                                    and the flags ({{simulated_dates_enabled}}, ...) as true/false;
                                     fails on any unresolved {{...}}
 """
 import argparse
@@ -84,6 +85,7 @@ class Env:
     # ---- templates
     def render(self, text):
         values = {k: getattr(self, k) for k in ("dq_catalog", "dashboard_schema", "warehouse_id", "target")}
+        values.update({k: "true" if getattr(self, k) else "false" for k in BOOL_KEYS})   # SQL boolean literals
         out = re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), m.group(0)), text)
         left = sorted(set(re.findall(r"\{\{\w+\}\}", out)))
         if left:
