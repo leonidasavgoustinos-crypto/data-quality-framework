@@ -18,6 +18,7 @@ Guards (raise GuardError, never warn-and-continue)
 Templates
   env.render(text)                  replaces {{dq_catalog}}, {{dashboard_schema}}, {{warehouse_id}}, {{target}}
                                     and the flags ({{simulated_dates_enabled}}, ...) as true/false;
+                                    {{use_synthetic}} = synthetic_enabled;
                                     fails on any unresolved {{...}}
 """
 import argparse
@@ -86,6 +87,7 @@ class Env:
     def render(self, text):
         values = {k: getattr(self, k) for k in ("dq_catalog", "dashboard_schema", "warehouse_id", "target")}
         values.update({k: "true" if getattr(self, k) else "false" for k in BOOL_KEYS})   # SQL boolean literals
+        values["use_synthetic"] = values["synthetic_enabled"]    # name used by the dashboard views
         out = re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), m.group(0)), text)
         left = sorted(set(re.findall(r"\{\{\w+\}\}", out)))
         if left:

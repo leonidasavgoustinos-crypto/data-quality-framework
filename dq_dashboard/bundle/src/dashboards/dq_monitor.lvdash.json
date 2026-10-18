@@ -1,10 +1,2623 @@
 {
-  "datasets": [],
+  "datasets": [
+    {
+      "name": "ds_data_mode",
+      "displayName": "Data mode",
+      "queryLines": [
+        "-- Data indicator shown on every page: \"Demo data ...\" while use_synthetic is true.\n",
+        "SELECT data_mode, data_mode_label FROM v_data_mode\n"
+      ]
+    },
+    {
+      "name": "ds_filter_values",
+      "displayName": "Filter values",
+      "queryLines": [
+        "-- Values for the global filter widgets (one row per combination present in the results).\n",
+        "SELECT DISTINCT\n",
+        "  run_date,\n",
+        "  coalesce(project, '(project-agnostic)') AS project,\n",
+        "  data_layer, catalog, criticality, rule_dimension\n",
+        "FROM v_results_all\n",
+        "WHERE row_level = 'rule'\n"
+      ]
+    },
+    {
+      "name": "ds_p1_kpis",
+      "displayName": "1 KPIs",
+      "queryLines": [
+        "-- 1.1-1.6 KPI row (one row). Latest day = newest run_date inside the selected range; comparisons use the\n",
+        "-- previous data day (1.4, 1.6) and the 7 days before the latest 7 (1.1). Weighted DQ score: high 3, medium 2, low 1.\n",
+        "WITH daily AS (\n",
+        "  SELECT\n",
+        "    run_date,\n",
+        "    SUM(IF(is_pass, crit_weight, 0)) AS w_pass,\n",
+        "    SUM(IF(is_scored, crit_weight, 0)) AS w_scored,\n",
+        "    COUNT_IF(row_level = 'rule') AS rules,\n",
+        "    COUNT_IF(status = 'error') AS errors,\n",
+        "    COALESCE(SUM(rows_quarantined), 0) AS quarantined,\n",
+        "    SUM(rows_evaluated) AS evaluated,\n",
+        "    COUNT_IF(status = 'code_error') AS code_errors\n",
+        "  FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "  GROUP BY run_date\n",
+        "),\n",
+        "d AS (\n",
+        "  SELECT MAX(IF(run_date >= :run_dates.min, run_date, NULL)) AS latest FROM daily\n",
+        "),\n",
+        "k AS (\n",
+        "  SELECT\n",
+        "    d.latest,\n",
+        "    MAX(IF(x.run_date < d.latest, x.run_date, NULL)) AS previous,\n",
+        "    SUM(IF(x.run_date BETWEEN date_sub(d.latest, 6) AND d.latest, x.w_pass, 0))\n",
+        "      / NULLIF(SUM(IF(x.run_date BETWEEN date_sub(d.latest, 6) AND d.latest, x.w_scored, 0)), 0) AS wscore_7d,\n",
+        "    SUM(IF(x.run_date BETWEEN date_sub(d.latest, 13) AND date_sub(d.latest, 7), x.w_pass, 0))\n",
+        "      / NULLIF(SUM(IF(x.run_date BETWEEN date_sub(d.latest, 13) AND date_sub(d.latest, 7), x.w_scored, 0)), 0) AS wscore_prev_7d,\n",
+        "    MAX(IF(x.run_date = d.latest, x.rules, NULL)) AS rules_today,\n",
+        "    MAX(IF(x.run_date = d.latest, x.errors, NULL)) AS failed_today,\n",
+        "    MAX(IF(x.run_date = d.latest, x.quarantined, NULL)) AS quarantined_today,\n",
+        "    MAX(IF(x.run_date = d.latest, x.evaluated, NULL)) AS evaluated_today,\n",
+        "    MAX(IF(x.run_date = d.latest, x.code_errors, NULL)) AS code_error_today\n",
+        "  FROM daily x CROSS JOIN d\n",
+        "  GROUP BY d.latest\n",
+        "),\n",
+        "p AS (\n",
+        "  SELECT k.*,\n",
+        "         MAX(IF(x.run_date = k.previous, x.errors, NULL)) AS failed_previous,\n",
+        "         MAX(IF(x.run_date = k.previous, x.code_errors, NULL)) AS code_error_previous\n",
+        "  FROM k CROSS JOIN daily x\n",
+        "  GROUP BY ALL\n",
+        "),\n",
+        "a AS (\n",
+        "  SELECT COUNT(DISTINCT table_id) AS tables_monitored, COUNT(*) AS active_rules\n",
+        "  FROM v_assignment_active\n",
+        "  WHERE is_effective_active\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT\n",
+        "  date_format(p.latest, 'yyyy-MM-dd') AS latest_day,\n",
+        "  date_format(p.previous, 'yyyy-MM-dd') AS previous_day,\n",
+        "  p.wscore_7d, p.wscore_prev_7d,\n",
+        "  a.tables_monitored, a.active_rules, COALESCE(p.rules_today, 0) AS rules_today,\n",
+        "  COALESCE(p.failed_today, 0) AS failed_today, p.failed_previous,\n",
+        "  COALESCE(p.quarantined_today, 0) AS quarantined_today, p.evaluated_today,\n",
+        "  concat(format_number(100 * p.quarantined_today / NULLIF(p.evaluated_today, 0), 2), ' % of rows evaluated') AS quarantined_share,\n",
+        "  COALESCE(p.code_error_today, 0) AS code_error_today, p.code_error_previous\n",
+        "FROM p CROSS JOIN a\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p1_last_success",
+      "displayName": "1 Last successful run",
+      "queryLines": [
+        "-- 1.7 Time since the newest execution that finished without code_error, up to the end of the selected range.\n",
+        "-- Reference time = v_data_mode.as_of_ts (end of the newest run when dates are simulated, otherwise now).\n",
+        "SELECT\n",
+        "  ROUND((unix_seconds(m.as_of_ts) - unix_seconds(s.last_success)) / 3600, 1) AS hours_since_success,\n",
+        "  concat(date_format(s.last_success, 'yyyy-MM-dd HH:mm'), ' UTC') AS last_success_label\n",
+        "FROM (\n",
+        "  SELECT MAX(run_end_ts) AS last_success\n",
+        "  FROM v_runs\n",
+        "  WHERE is_successful AND run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        ") s\n",
+        "CROSS JOIN v_data_mode m\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p1_trend",
+      "displayName": "1 DQ score per day",
+      "queryLines": [
+        "-- 1.8 Daily DQ score and weighted DQ score in the selected range, with the 95 % SLA as a reference series.\n",
+        "SELECT\n",
+        "  run_date,\n",
+        "  SUM(INT(is_pass)) / NULLIF(SUM(INT(is_scored)), 0) AS dq_score,\n",
+        "  SUM(IF(is_pass, crit_weight, 0)) / NULLIF(SUM(IF(is_scored, crit_weight, 0)), 0) AS weighted_dq_score,\n",
+        "  0.95 AS sla\n",
+        "FROM v_results_all\n",
+        "WHERE is_latest_for_day AND row_level = 'rule'\n",
+        "  AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "GROUP BY run_date\n",
+        "ORDER BY run_date\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p1_latest_status",
+      "displayName": "1 Latest run status",
+      "queryLines": [
+        "-- 1.9 Result status on the latest day inside the selected range (rule results + table-level faults).\n",
+        "WITH f AS (\n",
+        "  SELECT * FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT status, COUNT(*) AS results,\n",
+        "       CASE status WHEN 'pass' THEN 1 WHEN 'warning' THEN 2 WHEN 'error' THEN 3 ELSE 4 END AS status_order\n",
+        "FROM f\n",
+        "WHERE run_date = (SELECT MAX(run_date) FROM f)\n",
+        "GROUP BY status\n",
+        "ORDER BY status_order\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p1_heatmap",
+      "displayName": "1 Table health per day",
+      "queryLines": [
+        "-- 1.10 Table x day health for the last 30 days of the selected range. health = worst status of the day:\n",
+        "-- 3 error, 2 warning, 1 pass, 0 code_error only (no rule evaluated).\n",
+        "WITH f AS (\n",
+        "  SELECT * FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT\n",
+        "  concat(`schema`, '.', table_name) AS table_label,\n",
+        "  date_format(run_date, 'yyyy-MM-dd') AS day,\n",
+        "  MAX(CASE status WHEN 'error' THEN 3 WHEN 'warning' THEN 2 WHEN 'pass' THEN 1 ELSE 0 END) AS health\n",
+        "FROM f\n",
+        "WHERE run_date > date_sub((SELECT MAX(run_date) FROM f), 30)\n",
+        "GROUP BY 1, 2\n",
+        "ORDER BY 1, 2\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p1_worst_tables",
+      "displayName": "1 Worst tables",
+      "queryLines": [
+        "-- 1.11 Top 10 tables by failed rule results (error + warning) in the 7 days up to the latest day of the range.\n",
+        "-- One row per (table, status) so the bar can be colored by status.\n",
+        "WITH f AS (\n",
+        "  SELECT * FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND row_level = 'rule' AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "),\n",
+        "w AS (\n",
+        "  SELECT concat(`schema`, '.', table_name) AS table_label, status\n",
+        "  FROM f\n",
+        "  WHERE run_date > date_sub((SELECT MAX(run_date) FROM f), 7) AND status IN ('error', 'warning')\n",
+        "),\n",
+        "top AS (\n",
+        "  SELECT table_label, COUNT(*) AS failed_results FROM w GROUP BY table_label\n",
+        "  ORDER BY failed_results DESC, table_label LIMIT 10\n",
+        ")\n",
+        "SELECT w.table_label, w.status, COUNT(*) AS results, MAX(top.failed_results) AS failed_results\n",
+        "FROM w JOIN top ON top.table_label = w.table_label\n",
+        "GROUP BY w.table_label, w.status\n",
+        "ORDER BY failed_results DESC, w.table_label, w.status\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p1_worst_rules",
+      "displayName": "1 Worst rules",
+      "queryLines": [
+        "-- 1.12 Top 10 rule assignments by failed rows in the 7 days up to the latest day of the range.\n",
+        "WITH f AS (\n",
+        "  SELECT * FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND row_level = 'rule' AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT concat(rule_name, ' · ', table_name) AS rule_label, rule_name, rule_dimension,\n",
+        "       SUM(rows_failed) AS rows_failed, COUNT_IF(status IN ('error', 'warning')) AS failed_results\n",
+        "FROM f\n",
+        "WHERE run_date > date_sub((SELECT MAX(run_date) FROM f), 7)\n",
+        "GROUP BY 1, 2, 3\n",
+        "HAVING rows_failed > 0\n",
+        "ORDER BY rows_failed DESC, rule_label\n",
+        "LIMIT 10\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
   "pages": [
     {
       "name": "overview",
-      "displayName": "Overview",
-      "layout": []
+      "displayName": "1 Overview",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "p1-title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Overview\n",
+                "\n",
+                "Health of the monitored tables on the latest day of the selected range. Filters: Filters page. Colors: green pass, amber warning, red error, grey code_error."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-as-of",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "latest_day",
+                      "expression": "`latest_day`"
+                    },
+                    {
+                      "name": "previous_day",
+                      "expression": "`previous_day`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "latest_day",
+                    "displayName": "Latest day"
+                  },
+                  {
+                    "fieldName": "previous_day",
+                    "displayName": "Previous run day"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "As of"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-data-mode",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_data_mode",
+                  "fields": [
+                    {
+                      "name": "data_mode",
+                      "expression": "`data_mode`"
+                    },
+                    {
+                      "name": "data_mode_label",
+                      "expression": "`data_mode_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_mode",
+                    "displayName": "Data"
+                  },
+                  {
+                    "fieldName": "data_mode_label",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-dq-score",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "wscore_7d",
+                      "expression": "`wscore_7d`"
+                    },
+                    {
+                      "name": "wscore_prev_7d",
+                      "expression": "`wscore_prev_7d`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "wscore_7d",
+                  "displayName": "DQ score, weighted (7 d)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "target": {
+                  "fieldName": "wscore_prev_7d",
+                  "displayName": "previous"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "DQ score, weighted (7 d)",
+                "description": "Pass / (pass + warning + error), weighted high 3, medium 2, low 1. Last 7 days vs the 7 days before.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "tables_monitored",
+                      "expression": "`tables_monitored`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "tables_monitored",
+                  "displayName": "Tables monitored"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables monitored",
+                "description": "Tables with at least one active rule (assignment, template, policy, table and layer active).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-rules",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "rules_today",
+                      "expression": "`rules_today`"
+                    },
+                    {
+                      "name": "active_rules",
+                      "expression": "`active_rules`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "rules_today",
+                  "displayName": "Rules executed / active",
+                  "formatTemplate": "{{@formatted}} / {{active_rules}}"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rules executed / active",
+                "description": "Rule results on the latest day vs active rule assignments.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-failed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "failed_today",
+                      "expression": "`failed_today`"
+                    },
+                    {
+                      "name": "failed_previous",
+                      "expression": "`failed_previous`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "failed_today",
+                  "displayName": "Failed rules"
+                },
+                "target": {
+                  "fieldName": "failed_previous",
+                  "displayName": "previous"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failed rules",
+                "description": "Rule results with status error on the latest day, vs the previous run day.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-quarantined",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "quarantined_today",
+                      "expression": "`quarantined_today`"
+                    },
+                    {
+                      "name": "quarantined_share",
+                      "expression": "`quarantined_share`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "quarantined_today",
+                  "displayName": "Rows quarantined",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{@formatted}} ({{quarantined_share}})"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rows quarantined",
+                "description": "Rows written to quarantine on the latest day.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-code-error",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "code_error_today",
+                      "expression": "`code_error_today`"
+                    },
+                    {
+                      "name": "code_error_previous",
+                      "expression": "`code_error_previous`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "code_error_today",
+                  "displayName": "code_error"
+                },
+                "target": {
+                  "fieldName": "code_error_previous",
+                  "displayName": "previous"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "code_error",
+                "description": "Rules or tables that could not be evaluated on the latest day, vs the previous run day.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 5,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-last-success",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_last_success",
+                  "fields": [
+                    {
+                      "name": "hours_since_success",
+                      "expression": "`hours_since_success`"
+                    },
+                    {
+                      "name": "last_success_label",
+                      "expression": "`last_success_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "hours_since_success",
+                  "displayName": "Last successful run",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{@formatted}} h ago ({{last_success_label}})"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Last successful run",
+                "description": "Hours since the newest execution without code_error (simulated dates: since the newest run).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_trend",
+                  "fields": [
+                    {
+                      "name": "run_date",
+                      "expression": "`run_date`"
+                    },
+                    {
+                      "name": "dq_score",
+                      "expression": "`dq_score`"
+                    },
+                    {
+                      "name": "weighted_dq_score",
+                      "expression": "`weighted_dq_score`"
+                    },
+                    {
+                      "name": "sla",
+                      "expression": "`sla`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "run_date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "dq_score",
+                      "displayName": "DQ score"
+                    },
+                    {
+                      "fieldName": "weighted_dq_score",
+                      "displayName": "Weighted DQ score"
+                    },
+                    {
+                      "fieldName": "sla",
+                      "displayName": "SLA 95 %"
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "DQ score per day",
+                "description": "Selected range. code_error is not scored.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 8,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-latest-status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_latest_status",
+                  "fields": [
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "results",
+                      "expression": "`results`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "results",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "status",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "pass",
+                        "color": "#2E9E5B"
+                      },
+                      {
+                        "value": "warning",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "error",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "code_error",
+                        "color": "#9AA0A6"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Latest run status",
+                "description": "Rule results and table faults on the latest day.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 8,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-heatmap",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_heatmap",
+                  "fields": [
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "max(health)",
+                      "expression": "MAX(`health`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "table_label",
+                    "displayName": "Table"
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "day",
+                    "displayName": "Day"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "max(health)",
+                      "cellType": "text",
+                      "style": {
+                        "type": "basic",
+                        "rules": [
+                          {
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "3"
+                              },
+                              "operator": ">="
+                            },
+                            "backgroundColor": {
+                              "hex": "#D64545"
+                            }
+                          },
+                          {
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "2"
+                              },
+                              "operator": ">="
+                            },
+                            "backgroundColor": {
+                              "hex": "#E0A100"
+                            }
+                          },
+                          {
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "1"
+                              },
+                              "operator": ">="
+                            },
+                            "backgroundColor": {
+                              "hex": "#2E9E5B"
+                            }
+                          },
+                          {
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "0"
+                              },
+                              "operator": ">="
+                            },
+                            "backgroundColor": {
+                              "hex": "#9AA0A6"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Table health per day (last 30 days of the range)",
+                "description": "Worst status of the day: 3 error, 2 warning, 1 pass, 0 code_error only. Empty cell = no run.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 12,
+            "height": 12
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-worst-tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_worst_tables",
+                  "fields": [
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "results",
+                      "expression": "`results`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "results",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Failed rule results"
+                  }
+                },
+                "y": {
+                  "fieldName": "table_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "color": {
+                  "fieldName": "status",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "pass",
+                        "color": "#2E9E5B"
+                      },
+                      {
+                        "value": "warning",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "error",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "code_error",
+                        "color": "#9AA0A6"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top 10 worst tables (7 d)",
+                "description": "Rule results with error or warning in the 7 days up to the latest day.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p1-worst-rules",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_worst_rules",
+                  "fields": [
+                    {
+                      "name": "rule_label",
+                      "expression": "`rule_label`"
+                    },
+                    {
+                      "name": "rule_dimension",
+                      "expression": "`rule_dimension`"
+                    },
+                    {
+                      "name": "rows_failed",
+                      "expression": "`rows_failed`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "rows_failed",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Failed rows"
+                  }
+                },
+                "y": {
+                  "fieldName": "rule_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "color": {
+                  "fieldName": "rule_dimension",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Dimension"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Top 10 worst rules (7 d)",
+                "description": "Failed rows per rule assignment (rule · table) in the 7 days up to the latest day.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 26,
+            "width": 6,
+            "height": 7
+          }
+        }
+      ]
+    },
+    {
+      "name": "filters",
+      "displayName": "Filters",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "filter-run-date",
+            "queries": [
+              {
+                "name": "values_run_date",
+                "query": {
+                  "datasetName": "ds_filter_values",
+                  "fields": [
+                    {
+                      "name": "run_date",
+                      "expression": "`run_date`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_kpis_run_dates",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_last_success_run_dates",
+                "query": {
+                  "datasetName": "ds_p1_last_success",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_trend_run_dates",
+                "query": {
+                  "datasetName": "ds_p1_trend",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_latest_status_run_dates",
+                "query": {
+                  "datasetName": "ds_p1_latest_status",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_heatmap_run_dates",
+                "query": {
+                  "datasetName": "ds_p1_heatmap",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_tables_run_dates",
+                "query": {
+                  "datasetName": "ds_p1_worst_tables",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_rules_run_dates",
+                "query": {
+                  "datasetName": "ds_p1_worst_rules",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "run_date",
+                    "displayName": "Date range",
+                    "queryName": "values_run_date"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p1_kpis_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p1_last_success_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p1_trend_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p1_latest_status_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p1_heatmap_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p1_worst_tables_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p1_worst_rules_run_dates"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Date range"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter-project",
+            "queries": [
+              {
+                "name": "values_project",
+                "query": {
+                  "datasetName": "ds_filter_values",
+                  "fields": [
+                    {
+                      "name": "project",
+                      "expression": "`project`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_kpis_f_project",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_last_success_f_project",
+                "query": {
+                  "datasetName": "ds_p1_last_success",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_trend_f_project",
+                "query": {
+                  "datasetName": "ds_p1_trend",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_latest_status_f_project",
+                "query": {
+                  "datasetName": "ds_p1_latest_status",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_heatmap_f_project",
+                "query": {
+                  "datasetName": "ds_p1_heatmap",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_tables_f_project",
+                "query": {
+                  "datasetName": "ds_p1_worst_tables",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_rules_f_project",
+                "query": {
+                  "datasetName": "ds_p1_worst_rules",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "project",
+                    "displayName": "Project",
+                    "queryName": "values_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p1_kpis_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p1_last_success_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p1_trend_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p1_latest_status_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p1_heatmap_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p1_worst_tables_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p1_worst_rules_f_project"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Project"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter-data-layer",
+            "queries": [
+              {
+                "name": "values_data_layer",
+                "query": {
+                  "datasetName": "ds_filter_values",
+                  "fields": [
+                    {
+                      "name": "data_layer",
+                      "expression": "`data_layer`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_kpis_f_layer",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_trend_f_layer",
+                "query": {
+                  "datasetName": "ds_p1_trend",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_latest_status_f_layer",
+                "query": {
+                  "datasetName": "ds_p1_latest_status",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_heatmap_f_layer",
+                "query": {
+                  "datasetName": "ds_p1_heatmap",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_tables_f_layer",
+                "query": {
+                  "datasetName": "ds_p1_worst_tables",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_rules_f_layer",
+                "query": {
+                  "datasetName": "ds_p1_worst_rules",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "data_layer",
+                    "displayName": "Layer",
+                    "queryName": "values_data_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p1_kpis_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p1_trend_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p1_latest_status_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p1_heatmap_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p1_worst_tables_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p1_worst_rules_f_layer"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Layer"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter-catalog",
+            "queries": [
+              {
+                "name": "values_catalog",
+                "query": {
+                  "datasetName": "ds_filter_values",
+                  "fields": [
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_kpis_f_catalog",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_trend_f_catalog",
+                "query": {
+                  "datasetName": "ds_p1_trend",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_latest_status_f_catalog",
+                "query": {
+                  "datasetName": "ds_p1_latest_status",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_heatmap_f_catalog",
+                "query": {
+                  "datasetName": "ds_p1_heatmap",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_tables_f_catalog",
+                "query": {
+                  "datasetName": "ds_p1_worst_tables",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_rules_f_catalog",
+                "query": {
+                  "datasetName": "ds_p1_worst_rules",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "catalog",
+                    "displayName": "Catalog",
+                    "queryName": "values_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p1_kpis_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p1_trend_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p1_latest_status_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p1_heatmap_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p1_worst_tables_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p1_worst_rules_f_catalog"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Catalog"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter-criticality",
+            "queries": [
+              {
+                "name": "values_criticality",
+                "query": {
+                  "datasetName": "ds_filter_values",
+                  "fields": [
+                    {
+                      "name": "criticality",
+                      "expression": "`criticality`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_kpis_f_criticality",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_trend_f_criticality",
+                "query": {
+                  "datasetName": "ds_p1_trend",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_latest_status_f_criticality",
+                "query": {
+                  "datasetName": "ds_p1_latest_status",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_heatmap_f_criticality",
+                "query": {
+                  "datasetName": "ds_p1_heatmap",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_tables_f_criticality",
+                "query": {
+                  "datasetName": "ds_p1_worst_tables",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_rules_f_criticality",
+                "query": {
+                  "datasetName": "ds_p1_worst_rules",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "criticality",
+                    "displayName": "Criticality",
+                    "queryName": "values_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p1_kpis_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p1_trend_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p1_latest_status_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p1_heatmap_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p1_worst_tables_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p1_worst_rules_f_criticality"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Criticality"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter-rule-dimension",
+            "queries": [
+              {
+                "name": "values_rule_dimension",
+                "query": {
+                  "datasetName": "ds_filter_values",
+                  "fields": [
+                    {
+                      "name": "rule_dimension",
+                      "expression": "`rule_dimension`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_kpis_f_dimension",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_trend_f_dimension",
+                "query": {
+                  "datasetName": "ds_p1_trend",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_latest_status_f_dimension",
+                "query": {
+                  "datasetName": "ds_p1_latest_status",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_heatmap_f_dimension",
+                "query": {
+                  "datasetName": "ds_p1_heatmap",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_tables_f_dimension",
+                "query": {
+                  "datasetName": "ds_p1_worst_tables",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p1_worst_rules_f_dimension",
+                "query": {
+                  "datasetName": "ds_p1_worst_rules",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "rule_dimension",
+                    "displayName": "Dimension",
+                    "queryName": "values_rule_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p1_kpis_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p1_trend_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p1_latest_status_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p1_heatmap_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p1_worst_tables_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p1_worst_rules_f_dimension"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Dimension"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 4,
+            "height": 2
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#F7F8FA",
+        "dark": "#1B2026"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#11161B"
+      },
+      "widgetBorderColor": {
+        "light": "#FFFFFF",
+        "dark": "#11161B"
+      },
+      "fontColor": {
+        "light": "#1D2530",
+        "dark": "#E6EAEE"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#8ACAFF"
+      },
+      "visualizationColors": [
+        "#2272B4",
+        "#7B5EA7",
+        "#9AA0A6",
+        "#3BA3A3",
+        "#C9780D",
+        "#B45B8C",
+        "#4E6E8E"
+      ],
+      "widgetHeaderAlignment": "LEFT"
+    }
+  }
 }

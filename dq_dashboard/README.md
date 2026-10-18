@@ -87,6 +87,26 @@ python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/02_cap
 workspace user, so keep it outside `dq_dashboard/`. There is no default path: `gen_ddl.py` and `teardown.py`
 (steps 2-5) take `--objects`, else `DQ_SANDBOX_OBJECTS`, and stop with an error if neither is set.
 
+## Dashboard views and demo data
+The dashboard datasets read only the `v_*` views in the dashboard schema. Create them in this order (every target;
+`CREATE ... IF NOT EXISTS` only):
+```bash
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/04_v_results_ext.sql
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/05_synthetic_tables.sql
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/06_dashboard_views.sql
+```
+- `05_synthetic_tables.sql` creates the `*_synthetic` tables. Each has the columns of the real view it complements
+  plus `is_synthetic`. In `company` they stay empty.
+- The views combine real and synthetic rows through one switch, `{{use_synthetic}}` = bundle variable
+  `synthetic_enabled` (true in `free`, false in `company`). With false only real rows are read; every page shows
+  the data mode in its "Data" widget ("Demo data" while synthetic rows are included).
+- Demo history (sandbox only, deterministic, regenerates the table in full):
+  ```bash
+  python3 -I dq_dashboard/scripts/gen_synthetic.py --target free --dry-run   # row counts + content checksum
+  python3 -I dq_dashboard/scripts/gen_synthetic.py --target free             # default seed 20261001, 60 days
+  ```
+  It writes only `results_synthetic`, using the real runs as template (same scopes, tables, rules and config).
+
 ## Teardown
 Every step previews first. Nothing changes without `--execute`.
 ```bash
