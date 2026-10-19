@@ -2,8 +2,10 @@
 
   python3 -I scripts/gen_synthetic.py --target free [--seed 20261001] [--days 60] [--dry-run]
 
-What it writes: ONLY {{dq_catalog}}.{{dashboard_schema}}.results_synthetic (full regenerate: the table is emptied,
-then refilled). It never writes to results.*, configuration.*, metadata.* or quarantine.*.
+What it writes: ONLY these tables of {{dq_catalog}}.{{dashboard_schema}} (full regenerate: each table is emptied,
+then refilled): results_synthetic, rule_assignment_synthetic, quarantine_lifecycle_synthetic,
+incident_triage_synthetic, alert_log_synthetic. It never writes to results.*, configuration.*, metadata.* or
+quarantine.*.
 
 How the rows are built:
   * Template = the real runs in v_results_ext: the same scopes (apply_at, project), tables, rule assignments and
@@ -13,6 +15,12 @@ How the rows are built:
     rate, plus a few scheduled events (incident streaks, a partial load, reruns, missed runs, a slow week).
   * Volumes, durations and failure ratios come from the real per-assignment medians, with small noise and a slow
     volume growth; failing rows are quarantined (rows_quarantined = rows_failed), as in the real runs.
+  * Demo rules for the dimensions without real rules (completeness, consistency, timeliness): assignments in
+    rule_assignment_synthetic and their results on the synthetic days and on the real run days (added to the real
+    calls, is_synthetic = TRUE). Own random stream, so the history above does not change.
+  * After the results are written: the quarantine lifecycle (entry / exit time and outcome per quarantined rule
+    result), the triage of the derived incidents (owning team, acknowledgement) and the alerts with their outcome,
+    read back from the dashboard views (v_results_all, v_incidents) so that they match what the dashboard derives.
   * random.Random(seed) and uuid5 ids: the same seed gives byte-identical rows.
 
 Guards: sandbox_enabled and synthetic_enabled must be true; the host guard of env_config applies.
@@ -33,6 +41,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import env_config  # noqa: E402
 
 TABLE = "results_synthetic"
+TABLES = ("results_synthetic", "rule_assignment_synthetic", "quarantine_lifecycle_synthetic",
+          "incident_triage_synthetic", "alert_log_synthetic")
 NS = uuid.UUID("6f1c2a52-3d4e-4b8a-9c0d-5e7f81a2b3c4")
 MAX_PAYLOAD = 450_000                    # bytes of base64 per INSERT (the statement travels as a CLI argument)
 
@@ -291,7 +301,233 @@ def build(days_real, assignments, tables, seed, ndays):
                     r["is_synthetic"] = True
                     r.pop("_qt", None)
                 out += call_rows
+    return out, incidents, days
+
+
+# Demo rules for the dimensions without real rules: dimension -> template, policy and behaviour.
+# share = part of the (scope, table) pairs that get the rule; table checks have no failed rows (nothing quarantined).
+DEMO_RULES = {
+    "completeness": {"template_id": 9101, "rule_name": "row_count_check", "dimension_id": 1, "policy_id": 9201,
+                     "criticality": "high", "category": "error", "scope": "table", "quarantine": False,
+                     "params": lambda t: (None, '{"min_ratio_vs_previous": 0.9}'), "share": 0.75,
+                     "profile": ("stable", 0.02, 0.4), "table_check": True,
+                     "description": "Rows loaded are at least 90 % of the previous load"},
+    "consistency": {"template_id": 9102, "rule_name": "referential_integrity", "dimension_id": 3, "policy_id": 9202,
+                    "criticality": "medium", "category": "warning", "scope": "column", "quarantine": True,
+                    "params": lambda t: (json.dumps({"column": t["pk"][0]}) if t["pk"] else None, '{"max_orphans": 0}'),
+                    "share": 0.45, "profile": ("noisy", 0.08, 0.5), "table_check": False,
+                    "description": "Every key exists in the reference table"},
+    "timeliness": {"template_id": 9103, "rule_name": "freshness_check", "dimension_id": 9105, "policy_id": 9203,
+                   "criticality": "medium", "category": "error", "scope": "table", "quarantine": False,
+                   "params": lambda t: (json.dumps({"column": t["filter_field"]}) if t["filter_field"] else None,
+                                        '{"max_age_hours": 30}'), "share": 0.55,
+                   "profile": ("noisy", 0.04, 0.6), "table_check": True,
+                   "description": "The newest partition is at most 30 hours old"},
+}
+DEMO_ID0 = 900000                         # demo assignment ids start here (real ids are far below)
+CRIT_WEIGHT = {"high": 3, "medium": 2, "low": 1}
+
+
+def demo_assignments(rng, assignments, tables):
+    """One demo assignment per (dimension, table) for a share of the tables, on the table's first scope."""
+    first_scope = {}
+    for scope, table_id in sorted(tables):
+        first_scope.setdefault(table_id, scope)
+    pk = {}
+    for a in assignments.values():
+        t = a["tmpl"]
+        if t["rule_dimension"] == "uniqueness" and t.get("parameters_identifiers"):
+            cols = json.loads(t["parameters_identifiers"]).get("columns") or []
+            pk.setdefault(int(t["table_id"]), cols)
+    out, n = {}, 0
+    for dim, d in DEMO_RULES.items():
+        for table_id, scope in sorted(first_scope.items()):
+            if rng.random() >= d["share"]:
+                continue
+            n += 1
+            aid = DEMO_ID0 + n
+            tm = tables[(scope, table_id)]["tmpl"]
+            info = {"pk": pk.get(table_id, []), "filter_field": tm["filter_field"]}
+            ident, values = d["params"](info)
+            out[aid] = {"dim": dim, "d": d, "scope": scope, "table_id": table_id, "tmpl": tm,
+                        "ident": ident, "values": values, "profile": Profile(*d["profile"])}
     return out
+
+
+def assignment_rows(demo, first_day):
+    rows = []
+    for aid, a in sorted(demo.items()):
+        t, d = a["tmpl"], a["d"]
+        rows.append({
+            "rule_assignment_id": aid, "table_id": a["table_id"], "project_id": t["project_id"],
+            "rule_template_id": d["template_id"], "policy_id": d["policy_id"], "apply_at_id": None,
+            "project": t["project"], "data_layer": t["data_layer"], "catalog": t["catalog"],
+            "criticality": d["criticality"], "rule_dimension": a["dim"], "schema": t["schema"],
+            "table_name": t["table_name"], "table_nk": t["table_nk"], "apply_at": t["apply_at"],
+            "rule_name": d["rule_name"], "rule_type": "technical", "engine_type": "sql", "rule_scope": d["scope"],
+            "policy_category": d["category"], "quarantine_status": d["quarantine"],
+            "parameters_identifiers": a["ident"], "parameters_values": a["values"],
+            "assignment_is_active": True, "template_is_active": True, "policy_is_active": True,
+            "table_is_active": True, "apply_at_is_active": True, "is_effective_active": True,
+            "valid_from": dt.datetime.combine(first_day, dt.time(0, 0), dt.timezone.utc), "valid_to": None,
+            "added_by": "demo data", "is_synthetic": True})
+    return rows
+
+
+def demo_rule_row(ctx, a, status, rng):
+    """A demo rule result inside an existing table call (ctx = one rule row of that call)."""
+    d = a["d"]
+    r = {k: ctx.get(k) for k in ctx if k != "is_latest_for_day"}
+    rows = max(int(x) for x in [ctx.get("rows_evaluated") or 0]) or None
+    failed = 0
+    if status in ("error", "warning") and rows and not d["table_check"]:
+        failed = max(1, round(rows * math.exp(rng.gauss(math.log(0.004), 0.5))))
+    dur = round(0.6 + rng.random() * 1.8, 3)
+    end_t = ctx["end_timestamp_table"] or ctx["end_timestamp"]
+    start = end_t - dt.timedelta(seconds=dur + 0.3)
+    qt = ctx.get("quarantine_table") or ctx.get("quarantine")
+    r.update({
+        "row_level": "rule", "status": status, "is_synthetic": True,
+        "result_rule_id": str(uuid.uuid5(NS, f"{ctx['result_table_id']}|{a['_id']}")),
+        "rule_assignment_id": a["_id"], "policy_id": d["policy_id"], "rule_template_id": d["template_id"],
+        "rule_type_id": None, "rule_dimension_id": d["dimension_id"], "criticality": d["criticality"],
+        "rule_dimension": a["dim"], "rule_name": d["rule_name"], "rule_description": d["description"],
+        "rule_type": "technical", "rule_scope": d["scope"], "is_reusable": True, "engine_type": "sql",
+        "statement": None, "parameters_identifiers": a["ident"], "parameters_values": a["values"],
+        "policy_category": d["category"], "quarantine_status": d["quarantine"], "is_project_specific": False,
+        "start_timestamp": start, "end_timestamp": start + dt.timedelta(seconds=dur), "duration_s": dur,
+        "rows_evaluated": rows, "rows_failed": None if rows is None else failed,
+        "rows_pass": None if rows is None else rows - failed,
+        "rows_quarantined": failed if failed and d["quarantine"] else None,
+        "quarantine_table": qt if failed and d["quarantine"] else None,
+        "error_message": None, "error_summary": None, "crit_weight": CRIT_WEIGHT[d["criticality"]],
+        "is_pass": status == "pass", "is_scored": True,
+    })
+    return r
+
+
+def build_demo_rules(seed, assignments, tables, synth_rows, real_rows, incidents, ndays):
+    """Demo assignments and their results in every table call of the synthetic history and of the real runs."""
+    rng = random.Random(seed + 7)
+    demo = demo_assignments(rng, assignments, tables)
+    for aid, a in demo.items():
+        a["_id"] = aid
+    by_table = {}
+    for aid, a in sorted(demo.items()):
+        by_table.setdefault((a["scope"], a["table_id"]), []).append(aid)
+    # table calls: (day index, scope, table_id, call label, context row)
+    calls = {}
+    first = min(r["run_date"] for r in synth_rows)
+    for r in synth_rows:
+        if r["row_level"] == "rule":
+            calls.setdefault(r["result_table_id"], ((r["run_date"] - first).days, r))
+    real_days = sorted({r["run_date"] for r in real_rows})
+    for r in real_rows:
+        if r["row_level"] == "rule":
+            day = dt.date.fromisoformat(r["run_date"]) if isinstance(r["run_date"], str) else r["run_date"]
+            calls.setdefault(r["result_table_id"], (ndays + real_days.index(r["run_date"]), dict(r)))
+    for _, ctx in calls.values():         # real rows come as strings from the API
+        for k in ("end_timestamp_table", "end_timestamp", "start_timestamp_execution", "run_ts"):
+            if isinstance(ctx.get(k), str):
+                ctx[k] = dt.datetime.fromisoformat(ctx[k].replace("Z", "+00:00"))
+        if isinstance(ctx.get("run_date"), str):
+            ctx["run_date"] = dt.date.fromisoformat(ctx["run_date"])
+    status_of_day = {}
+    out = []
+    for rtid, (i, ctx) in sorted(calls.items(), key=lambda kv: (kv[1][0], str(kv[1][1]["run_ts"]), kv[0])):
+        scope = scope_of(ctx["apply_at"], ctx["project"])
+        for aid in by_table.get((scope, int(ctx["table_id"])), []):
+            a = demo[aid]
+            if (aid, i) not in status_of_day:
+                st = a["profile"].next(rng, 1.0)
+                if any(s0 <= i < s0 + ln and s == scope and t == a["table_id"] for s0, ln, s, t in incidents):
+                    st = "fail"
+                if (i, scope) == PARTIAL_LOAD and a["dim"] == "completeness" and \
+                        a["table_id"] == sorted(t for (sc, t) in tables if sc == scope)[0]:
+                    st = "fail"
+                status_of_day[(aid, i)] = st
+            st = status_of_day[(aid, i)]
+            if st == "fail":
+                st = "warning" if a["d"]["category"] == "warning" else "error"
+            out.append(demo_rule_row(ctx, a, st, rng))
+    return demo, out
+
+
+TEAMS = {"risk": "risk data team", "pd": "pd models team", "retail": "retail models team",
+         "masterscale": "rating models team", "corporate": "rating models team", "master": "rating models team",
+         "ifrs9": "ifrs9 team", "sas": "platform team"}
+
+
+def team_of(schema):
+    s = (schema or "").lower()
+    for k, v in TEAMS.items():
+        if s.startswith(k):
+            return v
+    return "data platform team"
+
+
+def build_lifecycle(seed, batches, as_of):
+    """Exit time and outcome per quarantined batch: most rows are reprocessed by the next run or released within
+    days, some are discarded, a few stay in quarantine."""
+    rng = random.Random(seed + 11)
+    out = []
+    for b in batches:
+        u = rng.random()
+        if u < 0.50:
+            outcome, delay = "reprocessed", dt.timedelta(hours=rng.uniform(20, 30))
+        elif u < 0.75:
+            outcome, delay = "released", dt.timedelta(days=rng.uniform(1, 6))
+        elif u < 0.85:
+            outcome, delay = "released", dt.timedelta(days=rng.uniform(7, 25))
+        elif u < 0.91:
+            outcome, delay = "discarded", dt.timedelta(days=rng.uniform(2, 10))
+        else:
+            outcome, delay = None, None
+        entered = b["entered_ts"]
+        left = entered + delay if delay else None
+        if left and left > as_of:
+            outcome, left = None, None
+        out.append({"batch_id": str(uuid.uuid5(NS, f"q|{b['result_rule_id']}")), "result_rule_id": b["result_rule_id"],
+                    "rule_assignment_id": b["rule_assignment_id"], "table_id": b["table_id"],
+                    "quarantine_table": b["quarantine_table"], "rows_quarantined": b["rows_quarantined"],
+                    "entered_ts": entered, "left_ts": left, "outcome": outcome, "is_synthetic": True})
+    return out
+
+
+def build_triage_alerts(seed, incidents, as_of):
+    """Owner and acknowledgement per incident; one alert per incident (plus a reminder for long high-criticality
+    incidents) with its outcome: noise for one-day incidents that pass again (often), accepted risk for long ones,
+    fixed otherwise; open incidents younger than a week are not assessed yet."""
+    rng = random.Random(seed + 13)
+    triage, alerts = [], []
+    for inc in incidents:
+        det, resolved = inc["detected_ts"], inc["resolved_ts"]
+        ack = det + dt.timedelta(hours=rng.uniform(1, 20)) if rng.random() < (0.85 if resolved else 0.6) else None
+        if ack and (ack > as_of or (resolved and ack > resolved)):
+            ack = None
+        triage.append({"incident_key": inc["incident_key"], "owner": team_of(inc["schema"]), "acknowledged_ts": ack,
+                       "is_synthetic": True})
+        runs = inc["failing_runs"]
+        if resolved:
+            if runs == 1 and rng.random() < 0.45:
+                outcome = "noise"
+            elif runs >= 6 and rng.random() < 0.35:
+                outcome = "accepted risk"
+            else:
+                outcome = "fixed"
+        else:
+            outcome = ("accepted risk" if rng.random() < 0.6 else None) if (as_of - det).days >= 7 else None
+        kinds = [("new incident", det + dt.timedelta(minutes=rng.uniform(1, 8)))]
+        if inc["criticality"] == "high" and runs >= 3:
+            kinds.append(("reminder", det + dt.timedelta(days=2, minutes=rng.uniform(1, 8))))
+        for kind, ts in kinds:
+            if ts > as_of:
+                continue
+            alerts.append({"alert_id": str(uuid.uuid5(NS, f"a|{inc['incident_key']}|{kind}")),
+                           "incident_key": inc["incident_key"], "rule_assignment_id": inc["rule_assignment_id"],
+                           "sent_ts": ts, "channel": "email" if inc["criticality"] == "high" else "chat",
+                           "alert_kind": kind, "outcome": outcome, "is_synthetic": True})
+    return triage, alerts
 
 
 def to_json(v):
@@ -324,18 +560,66 @@ def main():
         raise env_config.GuardError(f"{fq} does not exist: run scripts/run_ddl.py ddl/05_synthetic_tables.sql first")
 
     days, assignments, tables = load_template(env)
-    rows = build(days, assignments, tables, a.seed, a.days)
+    rows, incidents, syn_days = build(days, assignments, tables, a.seed, a.days)
+    types = {c["column_name"]: c["full_data_type"] for c in fetch(env, (
+        f"SELECT column_name, full_data_type FROM {env.dq_catalog}.information_schema.columns "
+        f"WHERE table_schema = '{env.dashboard_schema}' AND table_name = 'v_results_ext'"))}
+    real_rows = coerce(fetch(env, f"SELECT * FROM {env.sb}.v_results_ext WHERE row_level = 'rule' "
+                                  f"ORDER BY run_date, start_timestamp, result_rule_id"), types)
+    demo, demo_rows = build_demo_rules(a.seed, assignments, tables, rows, real_rows, incidents, a.days)
+    rows += demo_rows
+    print(f"{fq}: demo rules {len(demo)} assignments, {len(demo_rows)} results")
+    write(env, TABLE, rows, a.dry_run, extra=f"{len({r['result_id'] for r in rows})} calls, seed {a.seed}, "
+          f"{min(r['run_date'] for r in rows)}..{max(r['run_date'] for r in rows)}")
+    write(env, "rule_assignment_synthetic", assignment_rows(demo, syn_days[0]), a.dry_run)
+    if a.dry_run:
+        print("dry run: lifecycle, triage and alerts are derived from the written results, not built")
+        return
+    # derived from the dashboard views, in recorded (unshifted) time
+    shift = int(fetch(env, f"SELECT date_shift_days AS d FROM {env.sb}.v_date_shift")[0]["d"])
+    # as of = the dashboard's reference time (v_data_mode.as_of_ts: end of the newest run), in recorded time
+    as_of = dt.datetime.fromisoformat(fetch(env, f"SELECT CAST(timestampadd(DAY, -{shift}, as_of_ts) AS STRING) AS t "
+                                                 f"FROM {env.sb}.v_data_mode")[0]["t"].replace(" ", "T") + "+00:00")
+    ts = lambda v: None if v is None else dt.datetime.fromisoformat(v.replace("Z", "+00:00")) - dt.timedelta(days=shift)
+    batches = fetch(env, f"""SELECT result_rule_id, rule_assignment_id, table_id,
+            coalesce(quarantine_table, quarantine) AS quarantine_table, rows_quarantined, run_ts
+        FROM {env.sb}.v_results_all
+        WHERE is_latest_for_day AND row_level = 'rule' AND rows_quarantined > 0 ORDER BY result_rule_id""")
+    for b0 in batches:
+        b0.update({"rule_assignment_id": int(b0["rule_assignment_id"]), "table_id": int(b0["table_id"]),
+                   "rows_quarantined": int(b0["rows_quarantined"]),
+                   "entered_ts": ts(b0["run_ts"]) + dt.timedelta(minutes=10)})
+    write(env, "quarantine_lifecycle_synthetic", build_lifecycle(a.seed, batches, as_of), False)
+    incs = fetch(env, f"""SELECT incident_key, rule_assignment_id, `schema`, criticality, failing_runs,
+            CAST(detected_ts AS STRING) AS detected_ts, CAST(resolved_ts AS STRING) AS resolved_ts
+        FROM {env.sb}.v_incidents ORDER BY incident_key""")
+    for i0 in incs:
+        i0.update({"rule_assignment_id": int(i0["rule_assignment_id"]), "failing_runs": int(i0["failing_runs"]),
+                   "detected_ts": ts(i0["detected_ts"].replace(" ", "T") + "Z"),
+                   "resolved_ts": ts(i0["resolved_ts"].replace(" ", "T") + "Z") if i0["resolved_ts"] else None})
+    triage, alerts = build_triage_alerts(a.seed, incs, as_of)
+    write(env, "incident_triage_synthetic", triage, False)
+    write(env, "alert_log_synthetic", alerts, False)
+
+
+def write(env, table, rows, dry_run, extra=""):
+    """Full regenerate of one synthetic table of the dashboard schema: DELETE, then INSERT in batches."""
+    if table not in TABLES:
+        raise env_config.GuardError(f"REFUSED: {table} is not a synthetic table of this generator")
+    fq = f"{env.sb}.{table}"
+    cols = fetch(env, f"SELECT column_name, full_data_type FROM {env.dq_catalog}.information_schema.columns "
+                      f"WHERE table_schema = '{env.dashboard_schema}' AND table_name = '{table}' ORDER BY ordinal_position")
+    if not cols:
+        raise env_config.GuardError(f"{fq} does not exist: run scripts/run_ddl.py ddl/05_synthetic_tables.sql first")
     names = [c["column_name"] for c in cols]
-    missing = sorted(set(names) - set(rows[0]))
+    missing = sorted(set(names) - set(rows[0])) if rows else []
     if missing:
-        raise env_config.GuardError(f"generator does not fill columns {missing}")
+        raise env_config.GuardError(f"generator does not fill columns {missing} of {table}")
     casts = {c["column_name"]: SPARK_TYPES[c["full_data_type"]] for c in cols}
-    calls = len({r["result_id"] for r in rows})
     items = [json.dumps({n: to_json(r.get(n)) for n in names}) for r in rows]
     digest = hashlib.sha256("\n".join(items).encode()).hexdigest()[:16]
-    print(f"{fq}: {len(rows)} rows, {calls} calls, {len(assignments)} assignments, seed {a.seed}, "
-          f"{min(r['run_date'] for r in rows)}..{max(r['run_date'] for r in rows)}, content sha256 {digest}")
-    if a.dry_run:
+    print(f"{fq}: {len(rows)} rows{', ' + extra if extra else ''}, content sha256 {digest}")
+    if dry_run:
         return
     schema = ", ".join(f"`{n}`: {casts[n]}" for n in names)
     batches, cur, size = [], [], 0
@@ -348,14 +632,15 @@ def main():
     batches.append(cur)
     env_config.sql(env, f"DELETE FROM {fq}")
     for i, batch in enumerate(batches, 1):
+        if not batch:
+            continue
         b64 = base64.b64encode(("[" + ",".join(batch) + "]").encode()).decode()
         env_config.sql(env, f"INSERT INTO {fq} SELECT * FROM (SELECT inline(from_json(CAST(unbase64('{b64}') AS STRING), "
                             f"'ARRAY<STRUCT<{schema}>>')))")
-        print(f"  batch {i}/{len(batches)}: {len(batch)} rows", flush=True)
     n = fetch(env, f"SELECT count(*) AS n FROM {fq}")[0]["n"]
-    print(f"{fq}: {n} rows after insert")
+    print(f"  {fq}: {n} rows after insert ({len(batches)} batches)")
     if int(n) != len(rows):
-        raise env_config.GuardError(f"row count mismatch: generated {len(rows)}, table has {n}")
+        raise env_config.GuardError(f"row count mismatch in {table}: generated {len(rows)}, table has {n}")
 
 
 if __name__ == "__main__":

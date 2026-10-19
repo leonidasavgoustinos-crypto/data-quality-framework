@@ -100,6 +100,8 @@ FROM shifted;
 -- the call's own rows. run_ts/run_end_ts are calendar-aware (simulated date + real time of day) and shifted by
 -- v_date_shift like v_results_all.
 -- is_latest_for_day: the newest call per (run_date, apply_at, project).
+-- A call is synthetic when all its rows are synthetic; synthetic rule rows added to a real call (demo rules of the
+-- dimensions without real rules) count in that real call.
 CREATE VIEW IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.v_runs
 COMMENT 'dq_dashboard sandbox - generated'
 AS
@@ -110,7 +112,7 @@ WITH calendar AS (
   GROUP BY result_id
 ),
 detail AS (
-  SELECT result_id, is_synthetic,
+  SELECT result_id, MIN(is_synthetic) AS is_synthetic,
          MAX(run_date) AS run_date, MAX(recorded_run_date) AS recorded_run_date, MIN(run_ts) AS run_ts, MAX(apply_at) AS apply_at, MAX(project) AS project,
          MAX(execution_status) AS execution_status,
          MIN(start_timestamp_execution) AS start_timestamp_execution, MAX(end_timestamp_execution) AS end_timestamp_execution,
@@ -124,7 +126,7 @@ detail AS (
          COUNT_IF(row_level = 'rule' AND status = 'code_error') AS rules_code_error,
          SUM(rows_evaluated) AS rows_evaluated, SUM(rows_failed) AS rows_failed, SUM(rows_quarantined) AS rows_quarantined
   FROM {{dq_catalog}}.{{dashboard_schema}}.v_results_all
-  GROUP BY result_id, is_synthetic
+  GROUP BY result_id
 ),
 real_runs AS (
   SELECT
@@ -148,7 +150,7 @@ real_runs AS (
     FALSE AS is_synthetic
   FROM {{dq_catalog}}.results.result r
   LEFT JOIN calendar c ON c.result_id = r.result_id
-  LEFT JOIN detail d ON d.result_id = r.result_id AND NOT d.is_synthetic
+  LEFT JOIN detail d ON d.result_id = r.result_id
   LEFT JOIN {{dq_catalog}}.metadata.project p ON p.project_id = r.project_id
   CROSS JOIN {{dq_catalog}}.{{dashboard_schema}}.v_date_shift s
 ),
@@ -176,8 +178,9 @@ SELECT
                                                                                                 AS is_latest_for_day
 FROM runs;
 
--- v_assignment_active: one row per rule assignment (real configuration only) with the five is_active flags.
--- is_effective_active = assignment, template, policy, table and apply_at are all active.
+-- v_assignment_active: one row per rule assignment with the five is_active flags. is_effective_active = assignment,
+-- template, policy, table and apply_at are all active. Real configuration, plus the demo assignments of
+-- rule_assignment_synthetic while {{use_synthetic}} is true (is_synthetic).
 CREATE VIEW IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.v_assignment_active
 COMMENT 'dq_dashboard sandbox - generated'
 AS
@@ -190,7 +193,7 @@ SELECT
   ra.is_active AS assignment_is_active, rt.is_active AS template_is_active, rp.is_active AS policy_is_active,
   m.is_active AS table_is_active, ap.is_active AS apply_at_is_active,
   COALESCE(ra.is_active AND rt.is_active AND rp.is_active AND m.is_active AND ap.is_active, FALSE) AS is_effective_active,
-  ra.valid_from, ra.valid_to, ra.added_by
+  ra.valid_from, ra.valid_to, ra.added_by, FALSE AS is_synthetic
 FROM {{dq_catalog}}.configuration.rule_assignment ra
 LEFT JOIN {{dq_catalog}}.metadata.`table` m             ON m.table_id = ra.table_id
 LEFT JOIN {{dq_catalog}}.metadata.project p             ON p.project_id = ra.project_id
@@ -198,7 +201,16 @@ LEFT JOIN {{dq_catalog}}.configuration.run_policy rp    ON rp.policy_id = ra.pol
 LEFT JOIN {{dq_catalog}}.configuration.rule_template rt ON rt.rule_template_id = ra.rule_template_id
 LEFT JOIN {{dq_catalog}}.metadata.rule_dimension rd     ON rd.rule_dimension_id = rt.rule_dimension_id
 LEFT JOIN {{dq_catalog}}.metadata.rule_type ty          ON ty.rule_type_id = rt.rule_type_id
-LEFT JOIN {{dq_catalog}}.configuration.apply_at ap      ON ap.apply_at_id = ra.apply_at_id;
+LEFT JOIN {{dq_catalog}}.configuration.apply_at ap      ON ap.apply_at_id = ra.apply_at_id
+UNION ALL
+SELECT
+  rule_assignment_id, table_id, project_id, rule_template_id, policy_id, apply_at_id, project, data_layer, catalog,
+  criticality, rule_dimension, `schema`, table_name, table_nk, apply_at, rule_name, rule_type, engine_type,
+  rule_scope, policy_category, quarantine_status, parameters_identifiers, parameters_values, assignment_is_active,
+  template_is_active, policy_is_active, table_is_active, apply_at_is_active, is_effective_active, valid_from,
+  valid_to, added_by, TRUE AS is_synthetic
+FROM {{dq_catalog}}.{{dashboard_schema}}.rule_assignment_synthetic
+WHERE {{use_synthetic}};
 
 -- v_data_mode: one row describing what the dashboard shows. data_mode = 'Demo data' while use_synthetic is true;
 -- the label names the (shifted) days of the synthetic history and the real runs, and the date shift.

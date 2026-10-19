@@ -3648,6 +3648,1304 @@
           }
         }
       ]
+    },
+    {
+      "name": "ds_p5_lifecycle_kpis",
+      "displayName": "5 Released share and oldest age",
+      "queryLines": [
+        "-- 5.1 Released / reprocessed share and oldest row age (demo data; see F_LIFE). released_share = rows of the\n",
+        "-- batches that entered in the selected range and were released or reprocessed by T / all rows that entered in the\n",
+        "-- range. oldest_age_d = age at T of the oldest batch still in quarantine. note = why the values are empty.\n",
+        "WITH t AS (\n",
+        "  SELECT LEAST(m.as_of_ts, CAST(date_add(:run_dates.max, 1) AS TIMESTAMP)) AS t FROM v_data_mode m\n",
+        "),\n",
+        "l AS (\n",
+        "  SELECT q.*, t.t FROM v_quarantine_lifecycle q CROSS JOIN t\n",
+        "  WHERE q.entered_ts < t.t\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT\n",
+        "  SUM(IF(entered_ts >= CAST(:run_dates.min AS TIMESTAMP) AND left_ts <= t AND status IN ('released', 'reprocessed'),\n",
+        "         rows_quarantined, 0))\n",
+        "    / NULLIF(SUM(IF(entered_ts >= CAST(:run_dates.min AS TIMESTAMP), rows_quarantined, 0)), 0) AS released_share,\n",
+        "  MAX(IF(left_ts IS NULL OR left_ts > t, (unix_seconds(t) - unix_seconds(entered_ts)) / 86400.0, NULL)) AS oldest_age_d,\n",
+        "  COALESCE(SUM(IF(left_ts IS NULL OR left_ts > t, rows_quarantined, 0)), 0) AS rows_open,\n",
+        "  IF((SELECT COUNT(*) FROM v_quarantine_lifecycle) = 0, 'not recorded by the framework', 'demo data') AS note\n",
+        "FROM l\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p5_age_buckets",
+      "displayName": "5 Quarantine age",
+      "queryLines": [
+        "-- 5.3 Rows still in quarantine at T by age (demo data; see F_LIFE). All four buckets are always returned.\n",
+        "WITH t AS (\n",
+        "  SELECT LEAST(m.as_of_ts, CAST(date_add(:run_dates.max, 1) AS TIMESTAMP)) AS t FROM v_data_mode m\n",
+        "),\n",
+        "l AS (\n",
+        "  SELECT q.*, t.t FROM v_quarantine_lifecycle q CROSS JOIN t\n",
+        "  WHERE q.entered_ts < t.t\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "),\n",
+        "o AS (\n",
+        "  SELECT rows_quarantined, (unix_seconds(t) - unix_seconds(entered_ts)) / 86400.0 AS age_d\n",
+        "  FROM l WHERE left_ts IS NULL OR left_ts > t\n",
+        "),\n",
+        "b AS (\n",
+        "  SELECT * FROM VALUES (1, '< 1 d'), (2, '1-7 d'), (3, '7-30 d'), (4, '> 30 d') AS b(bucket_order, age_bucket)\n",
+        ")\n",
+        "SELECT b.age_bucket, b.bucket_order, COALESCE(SUM(o.rows_quarantined), 0) AS rows_in_quarantine,\n",
+        "       COUNT(o.rows_quarantined) AS batches\n",
+        "FROM b LEFT JOIN o\n",
+        "  ON b.bucket_order = CASE WHEN o.age_d < 1 THEN 1 WHEN o.age_d < 7 THEN 2 WHEN o.age_d < 30 THEN 3 ELSE 4 END\n",
+        "GROUP BY b.age_bucket, b.bucket_order\n",
+        "ORDER BY b.bucket_order\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p6_kpis",
+      "displayName": "6 Duration KPIs",
+      "queryLines": [
+        "-- 6.1 Duration KPIs. Last execution = the newest call up to E, vs the median duration of the calls of the same\n",
+        "-- scope (apply_at, project) in the 30 days before it. Per table / per rule / throughput over the 7 days up to E\n",
+        "-- (latest result per day): average table duration, average rule duration, rows evaluated per rule second.\n",
+        "WITH c AS (\n",
+        "  SELECT *, MAX(IF(run_date >= :run_dates.min, run_date, NULL)) OVER () AS e\n",
+        "  FROM v_runs\n",
+        "  WHERE run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "),\n",
+        "last_call AS (\n",
+        "  SELECT MAX_BY(named_struct('ts', run_ts, 'd', duration_s, 'scope', scope, 'day', run_date), run_ts) AS l\n",
+        "  FROM c WHERE run_date <= e\n",
+        "),\n",
+        "med AS (\n",
+        "  SELECT percentile_approx(c.duration_s, 0.5) AS median_30d\n",
+        "  FROM c CROSS JOIN last_call x\n",
+        "  WHERE c.scope = x.l.scope AND c.run_ts < x.l.ts AND c.run_date > date_sub(x.l.day, 30)\n",
+        "),\n",
+        "f AS (\n",
+        "  SELECT *, concat(`schema`, '.', table_name) AS table_label,\n",
+        "         MAX(IF(run_date >= :run_dates.min, run_date, NULL)) OVER () AS e\n",
+        "  FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND row_level = 'rule' AND run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "),\n",
+        "w AS (\n",
+        "  SELECT\n",
+        "    AVG(duration_s) AS avg_rule_s,\n",
+        "    SUM(rows_evaluated) / NULLIF(SUM(duration_s), 0) AS rows_per_s\n",
+        "  FROM f WHERE run_date > date_sub(e, 7)\n",
+        "),\n",
+        "tb AS (\n",
+        "  SELECT AVG(table_duration_s) AS avg_table_s\n",
+        "  FROM (SELECT DISTINCT result_table_id, table_duration_s FROM f WHERE run_date > date_sub(e, 7))\n",
+        ")\n",
+        "SELECT\n",
+        "  x.l.d AS last_duration_s, m.median_30d,\n",
+        "  concat(x.l.scope, ', ', date_format(x.l.ts, 'yyyy-MM-dd HH:mm')) AS last_label,\n",
+        "  tb.avg_table_s, w.avg_rule_s, w.rows_per_s\n",
+        "FROM last_call x CROSS JOIN med m CROSS JOIN w CROSS JOIN tb\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p6_cost",
+      "displayName": "6 DBUs",
+      "queryLines": [
+        "-- 6.1 DBUs of the jobs that run the checks (v_dq_cost, system.billing): last 7 and 30 billing days up to today\n",
+        "-- (real billing dates, not shifted), list cost in the price currency. note = why the values may be empty.\n",
+        "SELECT\n",
+        "  COALESCE(SUM(IF(usage_date > date_sub(current_date(), 7), dbus, 0)), 0) AS dbus_7d,\n",
+        "  COALESCE(SUM(IF(usage_date > date_sub(current_date(), 30), dbus, 0)), 0) AS dbus_30d,\n",
+        "  COALESCE(SUM(IF(usage_date > date_sub(current_date(), 7), list_cost, 0)), 0) AS cost_7d,\n",
+        "  COALESCE(MAX(currency), 'USD') AS currency,\n",
+        "  IF(COUNT(*) = 0, 'no billing rows for the check jobs yet', concat('billing up to ', CAST(MAX(usage_date) AS STRING)))\n",
+        "    AS note\n",
+        "FROM v_dq_cost\n"
+      ]
+    },
+    {
+      "name": "ds_p6_duration_trend",
+      "displayName": "6 Duration per run day",
+      "queryLines": [
+        "-- 6.2 Duration per run day over the 90 days up to E: sum of the durations of the day's newest call per scope.\n",
+        "-- p90 = 90th percentile of the daily durations in the window; regression = more than 1.3 x the median of the\n",
+        "-- previous 14 run days (at least 5).\n",
+        "WITH c AS (\n",
+        "  SELECT *, MAX(IF(run_date >= :run_dates.min, run_date, NULL)) OVER () AS e\n",
+        "  FROM v_runs\n",
+        "  WHERE is_latest_for_day AND run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "),\n",
+        "d AS (\n",
+        "  SELECT run_date, SUM(duration_s) / 60.0 AS duration_min, COUNT(*) AS calls\n",
+        "  FROM c WHERE run_date > date_sub(e, 90)\n",
+        "  GROUP BY run_date\n",
+        "),\n",
+        "r AS (\n",
+        "  SELECT *,\n",
+        "         percentile_approx(duration_min, 0.5) OVER (ORDER BY run_date ROWS BETWEEN 14 PRECEDING AND 1 PRECEDING) AS median_prev,\n",
+        "         COUNT(*) OVER (ORDER BY run_date ROWS BETWEEN 14 PRECEDING AND 1 PRECEDING) AS n_prev,\n",
+        "         percentile_approx(duration_min, 0.9) OVER () AS p90\n",
+        "  FROM d\n",
+        ")\n",
+        "SELECT run_date, duration_min, calls, p90, median_prev,\n",
+        "       IF(n_prev >= 5 AND duration_min > 1.3 * median_prev, 'regression', 'normal') AS kind\n",
+        "FROM r\n",
+        "ORDER BY run_date\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p6_dbu_by_project",
+      "displayName": "6 DBUs by project",
+      "queryLines": [
+        "-- 6.3 DBUs of the last 30 billing days (v_dq_cost) split by project, in proportion to each project's rule\n",
+        "-- seconds in the real runs started in the same 30 days (real dates; '(project-agnostic)' = no project).\n",
+        "-- An allocation, not a measurement: billing is per job, not per project.\n",
+        "WITH b AS (\n",
+        "  SELECT SUM(dbus) AS dbus FROM v_dq_cost WHERE usage_date > date_sub(current_date(), 30)\n",
+        "),\n",
+        "s AS (\n",
+        "  SELECT coalesce(project, '(project-agnostic)') AS project, SUM(duration_s) AS rule_s\n",
+        "  FROM v_results_all\n",
+        "  WHERE NOT is_synthetic AND row_level = 'rule' AND CAST(start_timestamp AS DATE) > date_sub(current_date(), 30)\n",
+        "    AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  GROUP BY 1\n",
+        ")\n",
+        "SELECT s.project, s.rule_s, b.dbus * s.rule_s / SUM(s.rule_s) OVER () AS dbus\n",
+        "FROM s CROSS JOIN b\n",
+        "WHERE b.dbus IS NOT NULL\n",
+        "ORDER BY dbus DESC\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p6_timeline",
+      "displayName": "6 Timeline of E",
+      "queryLines": [
+        "-- 6.4 Timeline of E: every table of the day's newest calls, from its start to its end (call start + offset of the\n",
+        "-- table inside the call), colored by table status.\n",
+        "WITH f AS (\n",
+        "  SELECT *, concat(`schema`, '.', table_name) AS table_label,\n",
+        "         MAX(IF(run_date >= :run_dates.min, run_date, NULL)) OVER () AS e\n",
+        "  FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND row_level = 'rule' AND run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "),\n",
+        "tbl AS (\n",
+        "  SELECT result_table_id, MAX(apply_at) AS apply_at, MAX(project) AS project, MAX(table_label) AS table_label,\n",
+        "         MAX(run_ts) AS call_ts, MIN(start_timestamp_execution) AS exec_start, MIN(start_timestamp_table) AS t_start,\n",
+        "         MAX(table_duration_s) AS table_s, MAX(table_status) AS table_status, COUNT(*) AS rules\n",
+        "  FROM f WHERE run_date = e\n",
+        "  GROUP BY result_table_id\n",
+        ")\n",
+        "SELECT concat(apply_at, CASE WHEN project IS NULL THEN '' ELSE concat(' / ', project) END, ' · ', table_label) AS call_table,\n",
+        "       timestampadd(MILLISECOND, CAST(1000 * (unix_millis(t_start) - unix_millis(exec_start)) / 1000 AS BIGINT), call_ts) AS start_ts,\n",
+        "       timestampadd(MILLISECOND, CAST(1000 * (unix_millis(t_start) - unix_millis(exec_start)) / 1000 + 1000 * table_s AS BIGINT), call_ts) AS end_ts,\n",
+        "       table_s, rules,\n",
+        "       CASE table_status WHEN 'code_error' THEN 'code_error / no run' ELSE table_status END AS status\n",
+        "FROM tbl\n",
+        "ORDER BY start_ts\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p6_slowest_rules",
+      "displayName": "6 Slowest rules",
+      "queryLines": [
+        "-- 6.5 Slowest rule assignments: average seconds per run in the selected range (latest result per day). Top 10.\n",
+        "WITH f AS (\n",
+        "  SELECT *, concat(`schema`, '.', table_name) AS table_label,\n",
+        "         MAX(IF(run_date >= :run_dates.min, run_date, NULL)) OVER () AS e\n",
+        "  FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND row_level = 'rule' AND run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT concat(rule_label_base, ' · ', table_name) AS rule_table, rule_dimension, AVG(duration_s) AS avg_s, COUNT(*) AS runs\n",
+        "FROM (SELECT f.*, concat(rule_name, COALESCE(concat('(', COALESCE(get_json_object(parameters_identifiers, '$.column'),\n",
+        "              array_join(from_json(get_json_object(parameters_identifiers, '$.columns'), 'ARRAY<STRING>'), ', ')), ')'), ''))\n",
+        "              AS rule_label_base FROM f WHERE run_date >= :run_dates.min AND duration_s IS NOT NULL)\n",
+        "GROUP BY 1, 2\n",
+        "ORDER BY avg_s DESC, rule_table\n",
+        "LIMIT 10\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p6_duration_vs_rows",
+      "displayName": "6 Duration vs rows",
+      "queryLines": [
+        "-- 6.6 Duration vs rows evaluated: one point per rule assignment, averages over the selected range (latest\n",
+        "-- result per day). Points far above the others for their row count are expensive checks.\n",
+        "WITH f AS (\n",
+        "  SELECT *, concat(`schema`, '.', table_name) AS table_label,\n",
+        "         MAX(IF(run_date >= :run_dates.min, run_date, NULL)) OVER () AS e\n",
+        "  FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND row_level = 'rule' AND run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT concat(rule_name, ' · ', table_name) AS rule_table, rule_name, engine_type,\n",
+        "       AVG(rows_evaluated) AS avg_rows, AVG(duration_s) AS avg_s, COUNT(*) AS runs\n",
+        "FROM f\n",
+        "WHERE run_date >= :run_dates.min AND duration_s IS NOT NULL AND rows_evaluated IS NOT NULL\n",
+        "GROUP BY rule_assignment_id, 1, 2, 3\n",
+        "ORDER BY avg_s DESC\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p7_kpis",
+      "displayName": "7 Incident KPIs",
+      "queryLines": [
+        "-- 7.1 Incident KPIs. Open = not resolved at E. MTTD (approximation) = hours from the previous run of the rule to\n",
+        "-- the run that detected the failure, incidents detected in the range. MTTR = hours from detection to the first\n",
+        "-- passing run, incidents resolved in the range. Alerts and noise ratio from v_alerts (demo data): alerts sent in the\n",
+        "-- 7 days up to E; noise = alerts assessed as noise / assessed alerts in the 30 days up to E.\n",
+        "WITH e AS (\n",
+        "  SELECT MAX(run_date) AS e FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "),\n",
+        "i AS (\n",
+        "  SELECT v.*, e.e,\n",
+        "         CASE WHEN v.resolved_ts IS NOT NULL AND CAST(v.resolved_ts AS DATE) <= e.e THEN 'resolved'\n",
+        "              WHEN v.acknowledged_ts IS NOT NULL AND CAST(v.acknowledged_ts AS DATE) <= e.e THEN 'acknowledged'\n",
+        "              ELSE 'open' END AS state_at_e\n",
+        "  FROM v_incidents v CROSS JOIN e\n",
+        "  WHERE v.started_on <= e.e\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "),\n",
+        "a AS (\n",
+        "  SELECT\n",
+        "    COUNT_IF(sent_date > date_sub(e.e, 7) AND sent_date <= e.e) AS alerts_7d,\n",
+        "    COUNT_IF(outcome = 'noise' AND sent_date > date_sub(e.e, 30) AND sent_date <= e.e)\n",
+        "      / NULLIF(COUNT_IF(outcome <> 'not assessed' AND sent_date > date_sub(e.e, 30) AND sent_date <= e.e), 0) AS noise_ratio,\n",
+        "    COUNT(*) AS alerts_all\n",
+        "  FROM v_alerts CROSS JOIN e\n",
+        "  WHERE TRUE\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT\n",
+        "  COUNT_IF(i.state_at_e <> 'resolved') AS open_incidents,\n",
+        "  COUNT_IF(i.state_at_e = 'acknowledged') AS acknowledged,\n",
+        "  AVG(IF(i.started_on >= :run_dates.min, i.time_to_detect_h, NULL)) AS mttd_h,\n",
+        "  AVG(IF(CAST(i.resolved_ts AS DATE) BETWEEN :run_dates.min AND i.e, i.time_to_resolve_h, NULL)) AS mttr_h,\n",
+        "  MAX(a.alerts_7d) AS alerts_7d, MAX(a.noise_ratio) AS noise_ratio,\n",
+        "  IF(MAX(a.alerts_all) = 0, 'not recorded by the framework', 'demo data') AS alerts_note\n",
+        "FROM i CROSS JOIN a\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p7_timeline",
+      "displayName": "7 Incident timeline",
+      "queryLines": [
+        "-- 7.2 Incident timeline: incidents active in the 14 days up to E, from detection to resolution (or E when not\n",
+        "-- resolved at E), colored by their state at E. The 30 most relevant: open first, then high criticality, longest.\n",
+        "WITH e AS (\n",
+        "  SELECT MAX(run_date) AS e FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "),\n",
+        "i AS (\n",
+        "  SELECT v.*, e.e,\n",
+        "         CASE WHEN v.resolved_ts IS NOT NULL AND CAST(v.resolved_ts AS DATE) <= e.e THEN 'resolved'\n",
+        "              WHEN v.acknowledged_ts IS NOT NULL AND CAST(v.acknowledged_ts AS DATE) <= e.e THEN 'acknowledged'\n",
+        "              ELSE 'open' END AS state_at_e\n",
+        "  FROM v_incidents v CROSS JOIN e\n",
+        "  WHERE v.started_on <= e.e\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT concat(incident_id, ' · ', rule_label, ' · ', table_name) AS incident,\n",
+        "       GREATEST(detected_ts, CAST(date_sub(e, 13) AS TIMESTAMP)) AS start_ts,\n",
+        "       IF(state_at_e = 'resolved', resolved_ts, CAST(date_add(e, 1) AS TIMESTAMP)) AS end_ts,\n",
+        "       state_at_e AS state, criticality, failing_runs\n",
+        "FROM i\n",
+        "WHERE COALESCE(CAST(resolved_ts AS DATE), date_add(e, 1)) > date_sub(e, 13)\n",
+        "ORDER BY CASE state_at_e WHEN 'resolved' THEN 1 ELSE 0 END, CASE criticality WHEN 'high' THEN 0 ELSE 1 END,\n",
+        "         failing_runs DESC, incident\n",
+        "LIMIT 30\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p7_incidents",
+      "displayName": "7 Incidents",
+      "queryLines": [
+        "-- 7.3 Incidents not resolved at E, and incidents resolved in the selected range. Age = days from detection to\n",
+        "-- E (open) or to resolution. Owner and acknowledgement are demo data ('n/a' when not recorded).\n",
+        "WITH e AS (\n",
+        "  SELECT MAX(run_date) AS e FROM v_results_all\n",
+        "  WHERE is_latest_for_day AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "),\n",
+        "i AS (\n",
+        "  SELECT v.*, e.e,\n",
+        "         CASE WHEN v.resolved_ts IS NOT NULL AND CAST(v.resolved_ts AS DATE) <= e.e THEN 'resolved'\n",
+        "              WHEN v.acknowledged_ts IS NOT NULL AND CAST(v.acknowledged_ts AS DATE) <= e.e THEN 'acknowledged'\n",
+        "              ELSE 'open' END AS state_at_e\n",
+        "  FROM v_incidents v CROSS JOIN e\n",
+        "  WHERE v.started_on <= e.e\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "),\n",
+        "al AS (SELECT incident_key, COUNT(*) AS alerts FROM v_alerts GROUP BY 1)\n",
+        "SELECT\n",
+        "  i.incident_id, i.table_label, i.rule_label, i.criticality, i.rule_dimension,\n",
+        "  CASE i.state_at_e WHEN 'open' THEN '🟥 open' WHEN 'acknowledged' THEN '🟧 acknowledged' ELSE '🟩 resolved' END AS state,\n",
+        "  COALESCE(i.owner, 'n/a') AS owner,\n",
+        "  ROUND((unix_seconds(IF(i.state_at_e = 'resolved', i.resolved_ts, CAST(date_add(i.e, 1) AS TIMESTAMP)))\n",
+        "         - unix_seconds(i.detected_ts)) / 86400.0, 1) AS age_d,\n",
+        "  date_format(i.detected_ts, 'yyyy-MM-dd HH:mm') AS detected,\n",
+        "  date_format(IF(i.state_at_e = 'resolved', i.resolved_ts, NULL), 'yyyy-MM-dd HH:mm') AS resolved,\n",
+        "  i.failing_runs, COALESCE(al.alerts, 0) AS alerts,\n",
+        "  CASE i.state_at_e WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END AS sort_key\n",
+        "FROM i LEFT JOIN al ON al.incident_key = i.incident_key\n",
+        "WHERE i.state_at_e <> 'resolved' OR CAST(i.resolved_ts AS DATE) >= :run_dates.min\n",
+        "ORDER BY sort_key, CASE i.criticality WHEN 'high' THEN 0 ELSE 1 END, i.detected_ts DESC\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p7_alert_outcomes",
+      "displayName": "7 Alert outcomes",
+      "queryLines": [
+        "-- 7.4 Outcome of the alerts sent in the selected range (demo data): fixed, accepted risk, noise, not assessed.\n",
+        "SELECT outcome, COUNT(*) AS alerts\n",
+        "FROM v_alerts\n",
+        "WHERE sent_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "GROUP BY outcome\n",
+        "ORDER BY alerts DESC\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p7_missed_runs",
+      "displayName": "7 Runs per scope and day",
+      "queryLines": [
+        "-- 7.5 Runs per scope (apply_at / project) and day in the selected range. Expected: one call per scope and day\n",
+        "-- (the run policy has no schedule), from the scope's first call. run = one call, rerun = more than one call,\n",
+        "-- missed = no call. Only the Project filter applies (calls have no layer, catalog, criticality or dimension).\n",
+        "WITH c AS (\n",
+        "  SELECT scope, run_date, COUNT(*) AS calls\n",
+        "  FROM v_runs\n",
+        "  WHERE run_date <= :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  GROUP BY 1, 2\n",
+        "),\n",
+        "s AS (\n",
+        "  SELECT scope, MIN(run_date) AS first_day FROM c GROUP BY scope\n",
+        "),\n",
+        "grid AS (\n",
+        "  SELECT s.scope, d.day\n",
+        "  FROM s\n",
+        "  LATERAL VIEW explode(sequence(GREATEST(s.first_day, :run_dates.min), :run_dates.max)) d AS day\n",
+        ")\n",
+        "SELECT g.scope, g.day, COALESCE(c.calls, 0) AS calls,\n",
+        "       CASE WHEN c.calls IS NULL THEN 'missed' WHEN c.calls > 1 THEN 'rerun' ELSE 'run' END AS status\n",
+        "FROM grid g LEFT JOIN c ON c.scope = g.scope AND c.run_date = g.day\n",
+        "WHERE g.day <= (SELECT MAX(run_date) FROM c)\n",
+        "ORDER BY g.scope, g.day\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "pages": [
@@ -7072,19 +8370,109 @@
         },
         {
           "widget": {
-            "name": "p5-not-available",
-            "multilineTextboxSpec": {
-              "lines": [
-                "#### Released / reprocessed %, oldest row age, age buckets\n",
-                "\n",
-                "Not available: the quarantine tables keep no entry or release timestamps and are replaced on every run, so rows cannot be followed over time. These widgets need a quarantine history with first-seen and released timestamps per row."
-              ]
+            "name": "p5-kpi-released",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "fields": [
+                    {
+                      "name": "released_share",
+                      "expression": "`released_share`"
+                    },
+                    {
+                      "name": "note",
+                      "expression": "`note`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "released_share",
+                  "displayName": "Released / reprocessed",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{@formatted}} · {{note}}"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Released / reprocessed",
+                "description": "Rows that entered quarantine in the range and were released or reprocessed by E. Demo data (see note).",
+                "showDescription": true
+              }
             }
           },
           "position": {
             "x": 6,
             "y": 2,
-            "width": 6,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p5-kpi-oldest",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "fields": [
+                    {
+                      "name": "oldest_age_d",
+                      "expression": "`oldest_age_d`"
+                    },
+                    {
+                      "name": "rows_open",
+                      "expression": "`rows_open`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "oldest_age_d",
+                  "displayName": "Oldest row in quarantine",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{@formatted}} d · {{rows_open}} rows open"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Oldest row in quarantine",
+                "description": "Age at E of the oldest rows still in quarantine. Demo data (see note).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
             "height": 3
           }
         },
@@ -7157,7 +8545,100 @@
           "position": {
             "x": 0,
             "y": 5,
-            "width": 12,
+            "width": 8,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p5-age-buckets",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p5_age_buckets",
+                  "fields": [
+                    {
+                      "name": "age_bucket",
+                      "expression": "`age_bucket`"
+                    },
+                    {
+                      "name": "rows_in_quarantine",
+                      "expression": "`rows_in_quarantine`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "age_bucket",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "< 1 d",
+                        "1-7 d",
+                        "7-30 d",
+                        "> 30 d"
+                      ]
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
+                  "fieldName": "rows_in_quarantine",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Rows in quarantine"
+                  }
+                },
+                "color": {
+                  "fieldName": "age_bucket",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "< 1 d",
+                        "color": "#2E9E5B"
+                      },
+                      {
+                        "value": "1-7 d",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "7-30 d",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "> 30 d",
+                        "color": "#8B1E1E"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quarantine age",
+                "description": "Rows still in quarantine at E by age. Demo data (see note).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
             "height": 7
           }
         },
@@ -7312,6 +8793,1446 @@
             "y": 12,
             "width": 6,
             "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p5-note",
+            "multilineTextboxSpec": {
+              "lines": [
+                "**Note.** Released / reprocessed, oldest row and quarantine age use demo data (quarantine_lifecycle_synthetic): the framework replaces a quarantine table on every run and records no entry or release time. With synthetic_enabled=false these widgets are empty."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "performance",
+      "displayName": "6 Performance & Cost",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "p6-title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Performance & Cost\n",
+                "\n",
+                "The checks as a workload: durations, regressions, slow rules and the cost of the jobs that run them. E = newest day of the selected range."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-data-mode",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_data_mode",
+                  "fields": [
+                    {
+                      "name": "data_mode",
+                      "expression": "`data_mode`"
+                    },
+                    {
+                      "name": "data_mode_label",
+                      "expression": "`data_mode_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_mode",
+                    "displayName": "Data"
+                  },
+                  {
+                    "fieldName": "data_mode_label",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-kpi-last",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "fields": [
+                    {
+                      "name": "last_duration_s",
+                      "expression": "`last_duration_s`"
+                    },
+                    {
+                      "name": "median_30d",
+                      "expression": "`median_30d`"
+                    },
+                    {
+                      "name": "last_label",
+                      "expression": "`last_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "last_duration_s",
+                  "displayName": "Last execution (s)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{@formatted}} s ({{last_label}})"
+                },
+                "target": {
+                  "fieldName": "median_30d",
+                  "displayName": "previous"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Last execution (s)",
+                "description": "Newest call up to E vs the median of the same scope's calls in the 30 days before.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-kpi-table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "fields": [
+                    {
+                      "name": "avg_table_s",
+                      "expression": "`avg_table_s`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg_table_s",
+                  "displayName": "Avg per table (s)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg per table (s)",
+                "description": "Average table duration, 7 days up to E.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-kpi-rule",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "fields": [
+                    {
+                      "name": "avg_rule_s",
+                      "expression": "`avg_rule_s`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg_rule_s",
+                  "displayName": "Avg per rule (s)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg per rule (s)",
+                "description": "Average rule duration, 7 days up to E.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-kpi-throughput",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "fields": [
+                    {
+                      "name": "rows_per_s",
+                      "expression": "`rows_per_s`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "rows_per_s",
+                  "displayName": "Throughput (rows/s)",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Throughput (rows/s)",
+                "description": "Rows evaluated per rule second, 7 days up to E.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-kpi-dbus",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_cost",
+                  "fields": [
+                    {
+                      "name": "dbus_7d",
+                      "expression": "`dbus_7d`"
+                    },
+                    {
+                      "name": "note",
+                      "expression": "`note`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "dbus_7d",
+                  "displayName": "DBUs (7 d)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{@formatted}} DBU · {{note}}"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "DBUs (7 d)",
+                "description": "Jobs that run the checks, system.billing; real billing dates, list price.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-duration-trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_duration_trend",
+                  "fields": [
+                    {
+                      "name": "duration_min",
+                      "expression": "`duration_min`"
+                    },
+                    {
+                      "name": "kind",
+                      "expression": "`kind`"
+                    },
+                    {
+                      "name": "median_prev",
+                      "expression": "`median_prev`"
+                    },
+                    {
+                      "name": "p90",
+                      "expression": "`p90`"
+                    },
+                    {
+                      "name": "run_date",
+                      "expression": "`run_date`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "custom-vega-viz",
+              "jsonSpec": {
+                "type": "vega-lite",
+                "spec": "{\"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\", \"data\": {\"name\": \"databricks_query\"}, \"width\": \"container\", \"height\": \"container\", \"config\": {\"autosize\": {\"type\": \"fit\", \"contains\": \"padding\"}, \"view\": {\"stroke\": null}}, \"layer\": [{\"mark\": {\"type\": \"line\", \"color\": \"#2272B4\", \"point\": false}, \"encoding\": {\"x\": {\"field\": \"run_date\", \"type\": \"temporal\", \"title\": null}, \"y\": {\"field\": \"duration_min\", \"type\": \"quantitative\", \"title\": \"Minutes per run day\"}}}, {\"mark\": {\"type\": \"rule\", \"strokeDash\": [4, 4], \"color\": \"#9AA0A6\"}, \"encoding\": {\"y\": {\"aggregate\": \"max\", \"field\": \"p90\", \"type\": \"quantitative\"}}}, {\"transform\": [{\"filter\": \"datum.kind === 'regression'\"}], \"mark\": {\"type\": \"point\", \"filled\": true, \"size\": 70, \"color\": \"#D64545\"}, \"encoding\": {\"x\": {\"field\": \"run_date\", \"type\": \"temporal\"}, \"y\": {\"field\": \"duration_min\", \"type\": \"quantitative\"}, \"tooltip\": [{\"field\": \"run_date\", \"type\": \"temporal\", \"title\": \"Day\"}, {\"field\": \"duration_min\", \"type\": \"quantitative\", \"title\": \"Minutes\", \"format\": \".1f\"}, {\"field\": \"median_prev\", \"type\": \"quantitative\", \"title\": \"Median of previous 14\", \"format\": \".1f\"}]}}]}"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "duration_min"
+                  },
+                  {
+                    "fieldName": "kind"
+                  },
+                  {
+                    "fieldName": "median_prev"
+                  },
+                  {
+                    "fieldName": "p90"
+                  },
+                  {
+                    "fieldName": "run_date"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Duration per run day (90 days up to E)",
+                "description": "Sum of the day's newest calls. Dashed = p90 of the window; red = regression (> 1.3 x median of the previous 14 run days).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 8,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-dbu-project",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_dbu_by_project",
+                  "fields": [
+                    {
+                      "name": "project",
+                      "expression": "`project`"
+                    },
+                    {
+                      "name": "dbus",
+                      "expression": "`dbus`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "dbus",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "project",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "DBUs by project (30 d)",
+                "description": "Allocated by each project's share of rule seconds in the real runs; billing is per job, not per project.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-timeline",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_timeline",
+                  "fields": [
+                    {
+                      "name": "call_table",
+                      "expression": "`call_table`"
+                    },
+                    {
+                      "name": "end_ts",
+                      "expression": "`end_ts`"
+                    },
+                    {
+                      "name": "rules",
+                      "expression": "`rules`"
+                    },
+                    {
+                      "name": "start_ts",
+                      "expression": "`start_ts`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "table_s",
+                      "expression": "`table_s`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "custom-vega-viz",
+              "jsonSpec": {
+                "type": "vega-lite",
+                "spec": "{\"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\", \"data\": {\"name\": \"databricks_query\"}, \"width\": \"container\", \"height\": \"container\", \"config\": {\"autosize\": {\"type\": \"fit\", \"contains\": \"padding\"}, \"view\": {\"stroke\": null}}, \"mark\": {\"type\": \"bar\", \"cornerRadius\": 2}, \"encoding\": {\"y\": {\"field\": \"call_table\", \"type\": \"nominal\", \"title\": null, \"sort\": {\"field\": \"start_ts\", \"op\": \"min\"}, \"axis\": {\"labelLimit\": 320}}, \"x\": {\"field\": \"start_ts\", \"type\": \"temporal\", \"title\": null}, \"x2\": {\"field\": \"end_ts\"}, \"color\": {\"field\": \"status\", \"type\": \"nominal\", \"title\": null, \"scale\": {\"domain\": [\"pass\", \"warning\", \"error\", \"code_error / no run\"], \"range\": [\"#2E9E5B\", \"#E0A100\", \"#D64545\", \"#9AA0A6\"]}, \"legend\": {\"orient\": \"top\", \"direction\": \"horizontal\"}}, \"tooltip\": [{\"field\": \"call_table\", \"title\": \"Scope \\u00b7 table\"}, {\"field\": \"table_s\", \"title\": \"Seconds\", \"type\": \"quantitative\"}, {\"field\": \"rules\", \"title\": \"Rules\", \"type\": \"quantitative\"}, {\"field\": \"status\", \"title\": \"Status\"}]}}"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "call_table"
+                  },
+                  {
+                    "fieldName": "end_ts"
+                  },
+                  {
+                    "fieldName": "rules"
+                  },
+                  {
+                    "fieldName": "start_ts"
+                  },
+                  {
+                    "fieldName": "status"
+                  },
+                  {
+                    "fieldName": "table_s"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Timeline of E",
+                "description": "Every table of the day's newest calls, from start to end, colored by table status.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-slowest-rules",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_slowest_rules",
+                  "fields": [
+                    {
+                      "name": "avg_s",
+                      "expression": "`avg_s`"
+                    },
+                    {
+                      "name": "rule_table",
+                      "expression": "`rule_table`"
+                    },
+                    {
+                      "name": "rule_dimension",
+                      "expression": "`rule_dimension`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "avg_s",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Seconds"
+                  },
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "rule_table",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "color": {
+                  "fieldName": "rule_dimension",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Slowest rules",
+                "description": "Average seconds per run in the selected range. Top 10.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-duration-rows",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p6_duration_vs_rows",
+                  "fields": [
+                    {
+                      "name": "avg_rows",
+                      "expression": "`avg_rows`"
+                    },
+                    {
+                      "name": "avg_s",
+                      "expression": "`avg_s`"
+                    },
+                    {
+                      "name": "engine_type",
+                      "expression": "`engine_type`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "avg_rows",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "axis": {
+                    "title": "Rows evaluated (avg)"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg_s",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "axis": {
+                    "title": "Seconds (avg)"
+                  }
+                },
+                "color": {
+                  "fieldName": "engine_type",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Engine"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Duration vs rows evaluated",
+                "description": "One point per rule assignment, selected range. High points for their row count = expensive checks.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 21,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p6-overhead",
+            "multilineTextboxSpec": {
+              "lines": [
+                "**DQ overhead (share of pipeline runtime).** Not available: the checks run in their own jobs here, so there is no pipeline runtime to compare with. Needs the pipeline jobs that call the framework (system.lakeflow job and task run timelines)."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 28,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "incidents",
+      "displayName": "7 Incidents",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "p7-title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Incidents\n",
+                "\n",
+                "Failures as incidents: an incident is a streak of failing run days of one rule. State at E = newest day of the selected range. Owner, alerts and outcomes are demo data."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-data-mode",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_data_mode",
+                  "fields": [
+                    {
+                      "name": "data_mode",
+                      "expression": "`data_mode`"
+                    },
+                    {
+                      "name": "data_mode_label",
+                      "expression": "`data_mode_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_mode",
+                    "displayName": "Data"
+                  },
+                  {
+                    "fieldName": "data_mode_label",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-kpi-open",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "fields": [
+                    {
+                      "name": "open_incidents",
+                      "expression": "`open_incidents`"
+                    },
+                    {
+                      "name": "acknowledged",
+                      "expression": "`acknowledged`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "open_incidents",
+                  "displayName": "Open incidents",
+                  "formatTemplate": "{{@formatted}} ({{acknowledged}} acknowledged)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Open incidents",
+                "description": "Not resolved at E.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-kpi-mttd",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "fields": [
+                    {
+                      "name": "mttd_h",
+                      "expression": "`mttd_h`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "mttd_h",
+                  "displayName": "MTTD (h, approx.)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "MTTD (h, approx.)",
+                "description": "Approximation: previous run of the rule -> run that detected the failure. Incidents detected in the range.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-kpi-mttr",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "fields": [
+                    {
+                      "name": "mttr_h",
+                      "expression": "`mttr_h`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "mttr_h",
+                  "displayName": "MTTR (h)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "MTTR (h)",
+                "description": "Detection -> first passing run. Incidents resolved in the range.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-kpi-alerts",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "fields": [
+                    {
+                      "name": "alerts_7d",
+                      "expression": "`alerts_7d`"
+                    },
+                    {
+                      "name": "alerts_note",
+                      "expression": "`alerts_note`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "alerts_7d",
+                  "displayName": "Alerts sent (7 d)",
+                  "formatTemplate": "{{@formatted}} · {{alerts_note}}"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Alerts sent (7 d)",
+                "description": "Demo data (alerts are not recorded by the framework).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-kpi-noise",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "fields": [
+                    {
+                      "name": "noise_ratio",
+                      "expression": "`noise_ratio`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "noise_ratio",
+                  "displayName": "Noise ratio (30 d)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Noise ratio (30 d)",
+                "description": "Alerts assessed as noise / assessed alerts. Demo data.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-timeline",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_timeline",
+                  "fields": [
+                    {
+                      "name": "criticality",
+                      "expression": "`criticality`"
+                    },
+                    {
+                      "name": "end_ts",
+                      "expression": "`end_ts`"
+                    },
+                    {
+                      "name": "failing_runs",
+                      "expression": "`failing_runs`"
+                    },
+                    {
+                      "name": "incident",
+                      "expression": "`incident`"
+                    },
+                    {
+                      "name": "start_ts",
+                      "expression": "`start_ts`"
+                    },
+                    {
+                      "name": "state",
+                      "expression": "`state`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "custom-vega-viz",
+              "jsonSpec": {
+                "type": "vega-lite",
+                "spec": "{\"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\", \"data\": {\"name\": \"databricks_query\"}, \"width\": \"container\", \"height\": \"container\", \"config\": {\"autosize\": {\"type\": \"fit\", \"contains\": \"padding\"}, \"view\": {\"stroke\": null}}, \"mark\": {\"type\": \"bar\", \"cornerRadius\": 2}, \"encoding\": {\"y\": {\"field\": \"incident\", \"type\": \"nominal\", \"title\": null, \"sort\": {\"field\": \"start_ts\", \"op\": \"min\"}, \"axis\": {\"labelLimit\": 320}}, \"x\": {\"field\": \"start_ts\", \"type\": \"temporal\", \"title\": null}, \"x2\": {\"field\": \"end_ts\"}, \"color\": {\"field\": \"state\", \"type\": \"nominal\", \"title\": null, \"scale\": {\"domain\": [\"open\", \"acknowledged\", \"resolved\"], \"range\": [\"#D64545\", \"#E0A100\", \"#2E9E5B\"]}, \"legend\": {\"orient\": \"top\", \"direction\": \"horizontal\"}}, \"tooltip\": [{\"field\": \"incident\", \"title\": \"Incident\"}, {\"field\": \"criticality\", \"title\": \"Criticality\"}, {\"field\": \"failing_runs\", \"title\": \"Failing runs\", \"type\": \"quantitative\"}, {\"field\": \"state\", \"title\": \"State at E\"}]}}"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "criticality"
+                  },
+                  {
+                    "fieldName": "end_ts"
+                  },
+                  {
+                    "fieldName": "failing_runs"
+                  },
+                  {
+                    "fieldName": "incident"
+                  },
+                  {
+                    "fieldName": "start_ts"
+                  },
+                  {
+                    "fieldName": "state"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Incident timeline (14 days up to E)",
+                "description": "Detection to resolution (or E). 30 shown: open first, then high criticality, longest.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 8,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-alert-outcomes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_alert_outcomes",
+                  "fields": [
+                    {
+                      "name": "outcome",
+                      "expression": "`outcome`"
+                    },
+                    {
+                      "name": "alerts",
+                      "expression": "`alerts`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "alerts",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "outcome",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "fixed",
+                        "color": "#2E9E5B"
+                      },
+                      {
+                        "value": "accepted risk",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "noise",
+                        "color": "#9AA0A6"
+                      },
+                      {
+                        "value": "not assessed",
+                        "color": "#2272B4"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Alert outcomes",
+                "description": "Alerts sent in the selected range. Demo data; empty when synthetic_enabled=false.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-incidents",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_incidents",
+                  "fields": [
+                    {
+                      "name": "incident_id",
+                      "expression": "`incident_id`"
+                    },
+                    {
+                      "name": "state",
+                      "expression": "`state`"
+                    },
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "rule_label",
+                      "expression": "`rule_label`"
+                    },
+                    {
+                      "name": "criticality",
+                      "expression": "`criticality`"
+                    },
+                    {
+                      "name": "owner",
+                      "expression": "`owner`"
+                    },
+                    {
+                      "name": "age_d",
+                      "expression": "`age_d`"
+                    },
+                    {
+                      "name": "detected",
+                      "expression": "`detected`"
+                    },
+                    {
+                      "name": "resolved",
+                      "expression": "`resolved`"
+                    },
+                    {
+                      "name": "failing_runs",
+                      "expression": "`failing_runs`"
+                    },
+                    {
+                      "name": "alerts",
+                      "expression": "`alerts`"
+                    },
+                    {
+                      "name": "rule_dimension",
+                      "expression": "`rule_dimension`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "incident_id",
+                    "displayName": "ID"
+                  },
+                  {
+                    "fieldName": "state",
+                    "displayName": "State at E"
+                  },
+                  {
+                    "fieldName": "table_label",
+                    "displayName": "Table"
+                  },
+                  {
+                    "fieldName": "rule_label",
+                    "displayName": "Rule"
+                  },
+                  {
+                    "fieldName": "criticality",
+                    "displayName": "Criticality"
+                  },
+                  {
+                    "fieldName": "owner",
+                    "displayName": "Owner"
+                  },
+                  {
+                    "fieldName": "age_d",
+                    "displayName": "Age (d)"
+                  },
+                  {
+                    "fieldName": "detected",
+                    "displayName": "Detected"
+                  },
+                  {
+                    "fieldName": "resolved",
+                    "displayName": "Resolved"
+                  },
+                  {
+                    "fieldName": "failing_runs",
+                    "displayName": "Failing runs"
+                  },
+                  {
+                    "fieldName": "alerts",
+                    "displayName": "Alerts"
+                  },
+                  {
+                    "fieldName": "rule_dimension",
+                    "displayName": "Dimension"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Incidents",
+                "description": "Open at E and resolved in the range. Owner: demo data ('n/a' = not recorded).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "p7-missed-runs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p7_missed_runs",
+                  "fields": [
+                    {
+                      "name": "calls",
+                      "expression": "`calls`"
+                    },
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "scope",
+                      "expression": "`scope`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "custom-vega-viz",
+              "jsonSpec": {
+                "type": "vega-lite",
+                "spec": "{\"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\", \"data\": {\"name\": \"databricks_query\"}, \"width\": \"container\", \"height\": \"container\", \"config\": {\"autosize\": {\"type\": \"fit\", \"contains\": \"padding\"}, \"view\": {\"stroke\": null}}, \"mark\": {\"type\": \"rect\", \"cornerRadius\": 1}, \"encoding\": {\"x\": {\"field\": \"day\", \"type\": \"ordinal\", \"title\": null, \"sort\": \"ascending\", \"scale\": {\"paddingInner\": 0.08}, \"axis\": {\"labelAngle\": -60, \"labelOverlap\": true, \"labelExpr\": \"slice(datum.value, 5)\"}}, \"color\": {\"field\": \"status\", \"type\": \"nominal\", \"title\": null, \"scale\": {\"domain\": [\"run\", \"rerun\", \"missed\"], \"range\": [\"#2E9E5B\", \"#E0A100\", \"#D64545\"]}, \"legend\": {\"orient\": \"top\", \"direction\": \"horizontal\"}}, \"tooltip\": [{\"field\": \"scope\", \"title\": \"Scope\"}, {\"field\": \"day\", \"title\": \"Day\"}, {\"field\": \"status\", \"title\": \"Status\"}, {\"field\": \"calls\", \"title\": \"Calls\", \"type\": \"quantitative\"}], \"y\": {\"field\": \"scope\", \"type\": \"nominal\", \"title\": null, \"sort\": \"ascending\", \"scale\": {\"paddingInner\": 0.08}, \"axis\": {\"labelLimit\": 280}}}}"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "calls"
+                  },
+                  {
+                    "fieldName": "day"
+                  },
+                  {
+                    "fieldName": "scope"
+                  },
+                  {
+                    "fieldName": "status"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Runs per scope and day",
+                "description": "Expected: one call per scope and day (the run policy has no schedule). Red = no call. Only the Project filter applies.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 22,
+            "width": 12,
+            "height": 6
           }
         }
       ]
@@ -7728,6 +10649,162 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p5_lifecycle_kpis_run_dates",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p5_age_buckets_run_dates",
+                "query": {
+                  "datasetName": "ds_p5_age_buckets",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_kpis_run_dates",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_trend_run_dates",
+                "query": {
+                  "datasetName": "ds_p6_duration_trend",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_timeline_run_dates",
+                "query": {
+                  "datasetName": "ds_p6_timeline",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_slowest_rules_run_dates",
+                "query": {
+                  "datasetName": "ds_p6_slowest_rules",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_vs_rows_run_dates",
+                "query": {
+                  "datasetName": "ds_p6_duration_vs_rows",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_kpis_run_dates",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_timeline_run_dates",
+                "query": {
+                  "datasetName": "ds_p7_timeline",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_incidents_run_dates",
+                "query": {
+                  "datasetName": "ds_p7_incidents",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_alert_outcomes_run_dates",
+                "query": {
+                  "datasetName": "ds_p7_alert_outcomes",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_missed_runs_run_dates",
+                "query": {
+                  "datasetName": "ds_p7_missed_runs",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -7859,6 +10936,54 @@
                   {
                     "parameterName": "run_dates",
                     "queryName": "ds_p5_ratio_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p5_lifecycle_kpis_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p5_age_buckets_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p6_kpis_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p6_duration_trend_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p6_timeline_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p6_slowest_rules_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p6_duration_vs_rows_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p7_kpis_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p7_timeline_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p7_incidents_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p7_alert_outcomes_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p7_missed_runs_run_dates"
                   }
                 ]
               },
@@ -8281,6 +11406,175 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p5_lifecycle_kpis_f_project",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p5_age_buckets_f_project",
+                "query": {
+                  "datasetName": "ds_p5_age_buckets",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_kpis_f_project",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_trend_f_project",
+                "query": {
+                  "datasetName": "ds_p6_duration_trend",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_dbu_by_project_f_project",
+                "query": {
+                  "datasetName": "ds_p6_dbu_by_project",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_timeline_f_project",
+                "query": {
+                  "datasetName": "ds_p6_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_slowest_rules_f_project",
+                "query": {
+                  "datasetName": "ds_p6_slowest_rules",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_vs_rows_f_project",
+                "query": {
+                  "datasetName": "ds_p6_duration_vs_rows",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_kpis_f_project",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_timeline_f_project",
+                "query": {
+                  "datasetName": "ds_p7_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_incidents_f_project",
+                "query": {
+                  "datasetName": "ds_p7_incidents",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_alert_outcomes_f_project",
+                "query": {
+                  "datasetName": "ds_p7_alert_outcomes",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_missed_runs_f_project",
+                "query": {
+                  "datasetName": "ds_p7_missed_runs",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -8412,6 +11706,58 @@
                   {
                     "parameterName": "f_project",
                     "queryName": "ds_p5_ratio_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p5_lifecycle_kpis_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p5_age_buckets_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p6_kpis_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p6_duration_trend_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p6_dbu_by_project_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p6_timeline_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p6_slowest_rules_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p6_duration_vs_rows_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p7_kpis_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p7_timeline_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p7_incidents_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p7_alert_outcomes_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p7_missed_runs_f_project"
                   }
                 ]
               },
@@ -8834,6 +12180,136 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p5_lifecycle_kpis_f_layer",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p5_age_buckets_f_layer",
+                "query": {
+                  "datasetName": "ds_p5_age_buckets",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_kpis_f_layer",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_timeline_f_layer",
+                "query": {
+                  "datasetName": "ds_p6_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_slowest_rules_f_layer",
+                "query": {
+                  "datasetName": "ds_p6_slowest_rules",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_vs_rows_f_layer",
+                "query": {
+                  "datasetName": "ds_p6_duration_vs_rows",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_kpis_f_layer",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_timeline_f_layer",
+                "query": {
+                  "datasetName": "ds_p7_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_incidents_f_layer",
+                "query": {
+                  "datasetName": "ds_p7_incidents",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_alert_outcomes_f_layer",
+                "query": {
+                  "datasetName": "ds_p7_alert_outcomes",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -8965,6 +12441,46 @@
                   {
                     "parameterName": "f_layer",
                     "queryName": "ds_p5_ratio_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p5_lifecycle_kpis_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p5_age_buckets_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p6_kpis_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p6_timeline_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p6_slowest_rules_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p6_duration_vs_rows_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p7_kpis_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p7_timeline_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p7_incidents_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p7_alert_outcomes_f_layer"
                   }
                 ]
               },
@@ -9387,6 +12903,136 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p5_lifecycle_kpis_f_catalog",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p5_age_buckets_f_catalog",
+                "query": {
+                  "datasetName": "ds_p5_age_buckets",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_kpis_f_catalog",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_timeline_f_catalog",
+                "query": {
+                  "datasetName": "ds_p6_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_slowest_rules_f_catalog",
+                "query": {
+                  "datasetName": "ds_p6_slowest_rules",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_vs_rows_f_catalog",
+                "query": {
+                  "datasetName": "ds_p6_duration_vs_rows",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_kpis_f_catalog",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_timeline_f_catalog",
+                "query": {
+                  "datasetName": "ds_p7_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_incidents_f_catalog",
+                "query": {
+                  "datasetName": "ds_p7_incidents",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_alert_outcomes_f_catalog",
+                "query": {
+                  "datasetName": "ds_p7_alert_outcomes",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -9518,6 +13164,46 @@
                   {
                     "parameterName": "f_catalog",
                     "queryName": "ds_p5_ratio_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p5_lifecycle_kpis_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p5_age_buckets_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p6_kpis_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p6_timeline_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p6_slowest_rules_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p6_duration_vs_rows_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p7_kpis_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p7_timeline_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p7_incidents_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p7_alert_outcomes_f_catalog"
                   }
                 ]
               },
@@ -9927,6 +13613,136 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p5_lifecycle_kpis_f_criticality",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p5_age_buckets_f_criticality",
+                "query": {
+                  "datasetName": "ds_p5_age_buckets",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_kpis_f_criticality",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_timeline_f_criticality",
+                "query": {
+                  "datasetName": "ds_p6_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_slowest_rules_f_criticality",
+                "query": {
+                  "datasetName": "ds_p6_slowest_rules",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_vs_rows_f_criticality",
+                "query": {
+                  "datasetName": "ds_p6_duration_vs_rows",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_kpis_f_criticality",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_timeline_f_criticality",
+                "query": {
+                  "datasetName": "ds_p7_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_incidents_f_criticality",
+                "query": {
+                  "datasetName": "ds_p7_incidents",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_alert_outcomes_f_criticality",
+                "query": {
+                  "datasetName": "ds_p7_alert_outcomes",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -10054,6 +13870,46 @@
                   {
                     "parameterName": "f_criticality",
                     "queryName": "ds_p5_ratio_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p5_lifecycle_kpis_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p5_age_buckets_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p6_kpis_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p6_timeline_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p6_slowest_rules_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p6_duration_vs_rows_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p7_kpis_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p7_timeline_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p7_incidents_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p7_alert_outcomes_f_criticality"
                   }
                 ]
               },
@@ -10476,6 +14332,136 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p5_lifecycle_kpis_f_dimension",
+                "query": {
+                  "datasetName": "ds_p5_lifecycle_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p5_age_buckets_f_dimension",
+                "query": {
+                  "datasetName": "ds_p5_age_buckets",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_kpis_f_dimension",
+                "query": {
+                  "datasetName": "ds_p6_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_timeline_f_dimension",
+                "query": {
+                  "datasetName": "ds_p6_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_slowest_rules_f_dimension",
+                "query": {
+                  "datasetName": "ds_p6_slowest_rules",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p6_duration_vs_rows_f_dimension",
+                "query": {
+                  "datasetName": "ds_p6_duration_vs_rows",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_kpis_f_dimension",
+                "query": {
+                  "datasetName": "ds_p7_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_timeline_f_dimension",
+                "query": {
+                  "datasetName": "ds_p7_timeline",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_incidents_f_dimension",
+                "query": {
+                  "datasetName": "ds_p7_incidents",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p7_alert_outcomes_f_dimension",
+                "query": {
+                  "datasetName": "ds_p7_alert_outcomes",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -10607,6 +14593,46 @@
                   {
                     "parameterName": "f_dimension",
                     "queryName": "ds_p5_ratio_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p5_lifecycle_kpis_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p5_age_buckets_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p6_kpis_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p6_timeline_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p6_slowest_rules_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p6_duration_vs_rows_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p7_kpis_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p7_timeline_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p7_incidents_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p7_alert_outcomes_f_dimension"
                   }
                 ]
               },

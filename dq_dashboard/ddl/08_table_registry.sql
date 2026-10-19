@@ -5,8 +5,8 @@
 --
 -- active_assignments / dimensions_covered: effective active assignments of the table (same is_effective_active
 -- as v_assignment_active) and the dimensions they cover. has_uniqueness_rule: at least one of them is in the
--- uniqueness dimension. missing_dimensions: active dimensions (metadata.rule_dimension) without any effective
--- active assignment on the table. layer_order: gold 1, silver 2, fs 3, any other layer 4 (gold and silver first).
+-- uniqueness dimension. missing_dimensions: dimensions (active in metadata.rule_dimension, or used by an
+-- effective active assignment, e.g. a demo assignment) without any effective active assignment on the table. layer_order: gold 1, silver 2, fs 3, any other layer 4 (gold and silver first).
 CREATE VIEW IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.v_table_registry
 COMMENT 'dq_dashboard sandbox - generated'
 AS
@@ -21,8 +21,9 @@ WITH cov AS (
 ),
 dims AS (
   SELECT array_sort(collect_set(rule_dimension)) AS all_dimensions
-  FROM {{dq_catalog}}.metadata.rule_dimension
-  WHERE is_active
+  FROM (SELECT rule_dimension FROM {{dq_catalog}}.metadata.rule_dimension WHERE is_active
+        UNION ALL
+        SELECT rule_dimension FROM {{dq_catalog}}.{{dashboard_schema}}.v_assignment_active WHERE is_effective_active)
 )
 SELECT
   m.table_id, m.catalog, m.`schema`, m.table AS table_name, concat(m.`schema`, '.', m.table) AS table_label,

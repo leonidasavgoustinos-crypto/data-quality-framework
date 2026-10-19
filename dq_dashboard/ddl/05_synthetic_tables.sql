@@ -80,3 +80,80 @@ CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.results_synthetic
   is_scored BOOLEAN,
   is_synthetic BOOLEAN
 ) COMMENT 'dq_dashboard sandbox - generated';
+
+-- rule_assignment_synthetic: demo rule assignments for the dimensions without real rules (completeness,
+-- consistency, timeliness), same columns as v_assignment_active. Their results are in results_synthetic (synthetic
+-- history and the real run days). The real configuration tables are never changed.
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.rule_assignment_synthetic (
+  rule_assignment_id BIGINT,
+  table_id BIGINT,
+  project_id BIGINT,
+  rule_template_id BIGINT,
+  policy_id BIGINT,
+  apply_at_id BIGINT,
+  project STRING,
+  data_layer STRING,
+  catalog STRING,
+  criticality STRING,
+  rule_dimension STRING,
+  `schema` STRING,
+  table_name STRING,
+  table_nk STRING,
+  apply_at STRING,
+  rule_name STRING,
+  rule_type STRING,
+  engine_type STRING,
+  rule_scope STRING,
+  policy_category STRING,
+  quarantine_status BOOLEAN,
+  parameters_identifiers STRING,
+  parameters_values STRING,
+  assignment_is_active BOOLEAN,
+  template_is_active BOOLEAN,
+  policy_is_active BOOLEAN,
+  table_is_active BOOLEAN,
+  apply_at_is_active BOOLEAN,
+  is_effective_active BOOLEAN,
+  valid_from TIMESTAMP,
+  valid_to TIMESTAMP,
+  added_by STRING,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';
+
+-- quarantine_lifecycle_synthetic: one row per batch of quarantined rows (one rule result), with the time the rows
+-- entered quarantine, the time they left it and how (released, reprocessed, discarded); NULL = still in quarantine.
+-- The framework stores neither time (it replaces a quarantine table on every run). Recorded (unshifted) times.
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.quarantine_lifecycle_synthetic (
+  batch_id STRING,
+  result_rule_id STRING,
+  rule_assignment_id BIGINT,
+  table_id BIGINT,
+  quarantine_table STRING,
+  rows_quarantined BIGINT,
+  entered_ts TIMESTAMP,
+  left_ts TIMESTAMP,
+  outcome STRING,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';
+
+-- incident_triage_synthetic: triage of the derived incidents (see v_incidents): acknowledgement and owning team.
+-- incident_key = rule_assignment_id || ':' || recorded first failing day. Not stored by the framework.
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.incident_triage_synthetic (
+  incident_key STRING,
+  owner STRING,
+  acknowledged_ts TIMESTAMP,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';
+
+-- alert_log_synthetic: alerts sent for the derived incidents and their outcome (fixed, accepted risk, noise;
+-- NULL = not assessed yet). Not stored by the framework (result_rule.alert is never written). Recorded times.
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.alert_log_synthetic (
+  alert_id STRING,
+  incident_key STRING,
+  rule_assignment_id BIGINT,
+  sent_ts TIMESTAMP,
+  channel STRING,
+  alert_kind STRING,
+  outcome STRING,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';

@@ -96,6 +96,7 @@ python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/05_syn
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/06_dashboard_views.sql
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/07_rule_daily.sql
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/08_table_registry.sql
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/09_incidents_quarantine_cost.sql
 ```
 `run_ddl.py` leaves an existing view as it is. To roll out a changed view definition, run the view file again in the
 separate replace mode (views only, see the `run_ddl.py` docstring for its checks):
@@ -120,12 +121,18 @@ It accepts only `CREATE VIEW IF NOT EXISTS` statements for views of the dashboar
 - `v_rule_daily` (07): latest status per rule assignment and day with flips and streaks (Tables and Rules pages).
 - `v_table_registry` (08): every registered table with its active rule count, covered and missing dimensions and
   primary key (coverage gaps on the Dimensions & Projects page).
+- `v_incidents`, `v_alerts`, `v_quarantine_lifecycle`, `v_dq_cost` (09): incidents derived from the failing streaks
+  of `v_rule_daily` (every target; owner and acknowledgement from demo data), alerts and quarantine lifecycle (demo
+  data only, empty when `synthetic_enabled=false`), DBUs of the check jobs from `system.billing`.
 - Demo history (sandbox only, deterministic, regenerates the table in full):
   ```bash
   python3 -I dq_dashboard/scripts/gen_synthetic.py --target free --dry-run   # row counts + content checksum
   python3 -I dq_dashboard/scripts/gen_synthetic.py --target free             # default seed 20261001, 60 days
   ```
-  It writes only `results_synthetic`, using the real runs as template (same scopes, tables, rules and config).
+  It writes only the `*_synthetic` tables of the dashboard schema: `results_synthetic` (history before the real runs,
+  using them as template, plus demo rules for completeness, consistency and timeliness on every run day),
+  `rule_assignment_synthetic` (those demo rules), and, read back from the views after the results are written,
+  `quarantine_lifecycle_synthetic`, `incident_triage_synthetic` and `alert_log_synthetic`.
 
 ## Teardown
 Every step previews first. Nothing changes without `--execute`.

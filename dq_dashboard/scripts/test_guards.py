@@ -151,7 +151,8 @@ assert all(f"COMMENT '{MARK}'" in w for w in writes), writes
 print(f"PASS replace-views with --yes: {len(writes)} CREATE OR REPLACE VIEW, nothing else")
 # the shipped view files pass the replace-mode checks
 existing[:] = []
-for f in ("04_v_results_ext.sql", "06_dashboard_views.sql", "07_rule_daily.sql"):
+for f in ("04_v_results_ext.sql", "06_dashboard_views.sql", "07_rule_daily.sql", "08_table_registry.sql",
+          "09_incidents_quarantine_cost.sql"):
     sent.clear()
     replace(os.path.join(DDL, f), "--dry-run")
     assert all(s.lstrip().upper().startswith("SELECT") for s in sent), sent
