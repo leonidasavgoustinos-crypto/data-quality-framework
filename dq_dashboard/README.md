@@ -95,6 +95,7 @@ python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/04_v_r
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/05_synthetic_tables.sql
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/06_dashboard_views.sql
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/07_rule_daily.sql
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/08_table_registry.sql
 ```
 `run_ddl.py` leaves an existing view as it is. To roll out a changed view definition, run the view file again in the
 separate replace mode (views only, see the `run_ddl.py` docstring for its checks):
@@ -117,6 +118,8 @@ It accepts only `CREATE VIEW IF NOT EXISTS` statements for views of the dashboar
   latest when a later call of the same day, scope and table exists (rerun). `tests/test_latest_flag.py` checks the
   expression on inline rows.
 - `v_rule_daily` (07): latest status per rule assignment and day with flips and streaks (Tables and Rules pages).
+- `v_table_registry` (08): every registered table with its active rule count, covered and missing dimensions and
+  primary key (coverage gaps on the Dimensions & Projects page).
 - Demo history (sandbox only, deterministic, regenerates the table in full):
   ```bash
   python3 -I dq_dashboard/scripts/gen_synthetic.py --target free --dry-run   # row counts + content checksum
