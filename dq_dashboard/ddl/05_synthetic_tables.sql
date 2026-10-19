@@ -157,3 +157,55 @@ CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.alert_log_synthet
   outcome STRING,
   is_synthetic BOOLEAN
 ) COMMENT 'dq_dashboard sandbox - generated';
+
+-- config_changes_synthetic: configuration change history (rules added, changed, disabled, thresholds changed),
+-- who and when. The framework keeps SCD2 rows and Delta history but no per-field change log. Recorded times.
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.config_changes_synthetic (
+  change_id STRING,
+  change_ts TIMESTAMP,
+  changed_by STRING,
+  change_type STRING,
+  rule_assignment_id BIGINT,
+  table_id BIGINT,
+  field_name STRING,
+  old_value STRING,
+  new_value STRING,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';
+
+-- recon_mapping_synthetic / recon_results_synthetic: same columns as the reconciliation module's mapping and
+-- results tables (reconciliation/DDL.py), for a migration that has no reconciliation runs here. Recorded times.
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.recon_mapping_synthetic (
+  table_name STRING,
+  old STRING,
+  new STRING,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';
+
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.recon_results_synthetic (
+  execution_timestamp TIMESTAMP,
+  reconciliation_type STRING,
+  `table` STRING,
+  old_table STRING,
+  new_table STRING,
+  result_old STRING,
+  result_new STRING,
+  additional_info STRING,
+  result_status STRING,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';
+
+-- schema_changes_synthetic: schema change events of registered tables before the real snapshots
+-- (columns_snapshot): column added, removed or type changed. Consistent with the current schemas: added and
+-- type-changed columns exist today with new_type; removed columns do not. Recorded times.
+CREATE TABLE IF NOT EXISTS {{dq_catalog}}.{{dashboard_schema}}.schema_changes_synthetic (
+  event_ts TIMESTAMP,
+  table_catalog STRING,
+  table_schema STRING,
+  table_name STRING,
+  column_name STRING,
+  change_type STRING,
+  old_type STRING,
+  new_type STRING,
+  is_synthetic BOOLEAN
+) COMMENT 'dq_dashboard sandbox - generated';

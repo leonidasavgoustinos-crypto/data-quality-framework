@@ -4893,7 +4893,7 @@
       "queryLines": [
         "-- 7.5 Runs per scope (apply_at / project) and day in the selected range. Expected: one call per scope and day\n",
         "-- (the run policy has no schedule), from the scope's first call. run = one call, rerun = more than one call,\n",
-        "-- missed = no call. Only the Project filter applies (calls have no layer, catalog, criticality or dimension).\n",
+        "-- missed = no call. day is a 'yyyy-MM-dd' string (the grid's axis labels slice it). Only the Project filter applies (calls have no layer, catalog, criticality or dimension).\n",
         "WITH c AS (\n",
         "  SELECT scope, run_date, COUNT(*) AS calls\n",
         "  FROM v_runs\n",
@@ -4909,7 +4909,7 @@
         "  FROM s\n",
         "  LATERAL VIEW explode(sequence(GREATEST(s.first_day, :run_dates.min), :run_dates.max)) d AS day\n",
         ")\n",
-        "SELECT g.scope, g.day, COALESCE(c.calls, 0) AS calls,\n",
+        "SELECT g.scope, date_format(g.day, 'yyyy-MM-dd') AS day, COALESCE(c.calls, 0) AS calls,\n",
         "       CASE WHEN c.calls IS NULL THEN 'missed' WHEN c.calls > 1 THEN 'rerun' ELSE 'run' END AS status\n",
         "FROM grid g LEFT JOIN c ON c.scope = g.scope AND c.run_date = g.day\n",
         "WHERE g.day <= (SELECT MAX(run_date) FROM c)\n",
@@ -4919,6 +4919,938 @@
         {
           "displayName": "Project",
           "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p8_kpis",
+      "displayName": "8 Coverage KPIs",
+      "queryLines": [
+        "-- 8.1 Catalog coverage: tables in the schemas that hold registered tables with at least one effective active rule,\n",
+        "-- registered tables, uncovered tables; configuration changes in the selected range (all sources).\n",
+        "WITH c AS (\n",
+        "  SELECT * FROM v_catalog_coverage WHERE TRUE\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "),\n",
+        "ch AS (\n",
+        "  SELECT COUNT(*) AS changes FROM v_config_changes WHERE change_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        ")\n",
+        "SELECT COUNT_IF(is_covered) / NULLIF(COUNT(*), 0) AS coverage, COUNT_IF(is_covered) AS covered, COUNT(*) AS tables,\n",
+        "       COUNT_IF(is_registered) AS registered, COUNT_IF(NOT is_covered) AS uncovered, MAX(ch.changes) AS changes\n",
+        "FROM c CROSS JOIN ch\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p8_rules_dim_crit",
+      "displayName": "8 Rules by dimension and criticality",
+      "queryLines": [
+        "-- 8.2 Effective active rule assignments by dimension and criticality.\n",
+        "SELECT rule_dimension, criticality, COUNT(*) AS rules\n",
+        "FROM v_assignment_active\n",
+        "WHERE is_effective_active\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "GROUP BY 1, 2\n",
+        "ORDER BY 1, 2\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p8_rules_breakdown",
+      "displayName": "8 Rules by type, engine, apply at",
+      "queryLines": [
+        "-- 8.3 Rule assignments by rule type, engine and apply_at, active vs inactive (inactive = any of the five\n",
+        "-- is_active flags is false).\n",
+        "WITH a AS (\n",
+        "  SELECT * FROM v_assignment_active WHERE TRUE\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        ")\n",
+        "SELECT concat(facet, ': ', value) AS item, facet, value, IF(is_effective_active, 'active', 'inactive') AS state,\n",
+        "       COUNT(*) AS rules\n",
+        "FROM a\n",
+        "LATERAL VIEW stack(3, 'rule type', rule_type, 'engine', engine_type, 'apply at', apply_at) f AS facet, value\n",
+        "GROUP BY 1, 2, 3, 4\n",
+        "ORDER BY facet, rules DESC\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p8_uncovered",
+      "displayName": "8 Tables without rules",
+      "queryLines": [
+        "-- 8.4 Tables without effective active rules in the schemas that hold registered tables, most read first (reads =\n",
+        "-- getTable events in system.access.audit, last 30 days).\n",
+        "SELECT table_label, catalog, data_layer, IF(is_registered, 'yes', 'no') AS registered, reads_30d, table_type\n",
+        "FROM v_catalog_coverage\n",
+        "WHERE NOT is_covered\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "ORDER BY reads_30d DESC, table_label\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p8_change_log",
+      "displayName": "8 Configuration change log",
+      "queryLines": [
+        "-- 8.5 Configuration change log in the selected range, newest first. Sources: Delta history of the configuration\n",
+        "-- tables, SCD2 rows of rule_assignment, demo change history (rule added / changed / disabled, threshold changed).\n",
+        "SELECT date_format(change_ts, 'yyyy-MM-dd HH:mm') AS changed_at, changed_by, change_type, object_label, table_label,\n",
+        "       field_name, concat_ws(' -> ', old_value, new_value) AS change, source, change_ts\n",
+        "FROM v_config_changes\n",
+        "WHERE change_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "ORDER BY change_ts DESC\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p8_impact",
+      "displayName": "8 Impact of a configuration change",
+      "queryLines": [
+        "-- 8.6 Impact of a configuration change: the table with the newest rule-level change (threshold changed, rule\n",
+        "-- changed or disabled) in the selected range; its daily DQ score over the 30 days up to E and its change dates.\n",
+        "-- kind = 'score' rows (day, score) and 'change' rows (day, label). day is a 'yyyy-MM-dd' string.\n",
+        "WITH ch AS (\n",
+        "  SELECT * FROM v_config_changes\n",
+        "  WHERE change_type IN ('threshold changed', 'rule changed', 'rule disabled')\n",
+        "    AND change_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_project) = 0 OR array_contains(:f_project, coalesce(project, '(project-agnostic)')))\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        "  AND (size(:f_criticality) = 0 OR array_contains(:f_criticality, criticality))\n",
+        "  AND (size(:f_dimension) = 0 OR array_contains(:f_dimension, rule_dimension))\n",
+        "),\n",
+        "pick AS (\n",
+        "  SELECT MAX_BY(table_id, change_ts) AS table_id FROM ch\n",
+        "),\n",
+        "d AS (\n",
+        "  SELECT v.run_date, v.table_label, v.is_pass, v.is_scored,\n",
+        "         MAX(v.run_date) OVER () AS e\n",
+        "  FROM v_rule_daily v JOIN pick p ON v.table_id = p.table_id\n",
+        "  WHERE v.run_date <= :run_dates.max\n",
+        ")\n",
+        "SELECT 'score' AS kind, date_format(run_date, 'yyyy-MM-dd') AS day, MAX(table_label) AS table_label,\n",
+        "       COUNT_IF(is_pass) / NULLIF(COUNT_IF(is_scored), 0) AS score, CAST(NULL AS STRING) AS label\n",
+        "FROM d WHERE run_date > date_sub(e, 30)\n",
+        "GROUP BY run_date\n",
+        "UNION ALL\n",
+        "SELECT 'change', date_format(c.change_date, 'yyyy-MM-dd'), MAX(c.table_label), CAST(NULL AS DOUBLE),\n",
+        "       concat_ws('; ', collect_list(concat(c.change_type, ' (', c.object_label, ')')))\n",
+        "FROM ch c JOIN pick p ON c.table_id = p.table_id\n",
+        "GROUP BY c.change_date\n",
+        "ORDER BY kind DESC, day\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Criticality",
+          "keyword": "f_criticality",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Dimension",
+          "keyword": "f_dimension",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Project",
+          "keyword": "f_project",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p9_kpis",
+      "displayName": "9 Reconciliation KPIs",
+      "queryLines": [
+        "-- 9.1 Mappings and the status of their newest reconciliation run up to the end of the range. note = why the values\n",
+        "-- may be empty (no reconciliation runs).\n",
+        "WITH r AS (\n",
+        "  SELECT *, ROW_NUMBER() OVER (PARTITION BY mapping ORDER BY execution_timestamp DESC) AS rn\n",
+        "  FROM v_recon_runs\n",
+        "  WHERE run_date <= :run_dates.max\n",
+        ")\n",
+        "SELECT COUNT(*) AS mappings, COUNT_IF(status = 'match') AS matched, COUNT_IF(status = 'partial') AS partial,\n",
+        "       COUNT_IF(status = 'mismatch') AS mismatch,\n",
+        "       IF(COUNT(*) = 0, 'no reconciliation runs', 'demo data') AS note\n",
+        "FROM r WHERE rn = 1\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p9_progress",
+      "displayName": "9 Migration progress",
+      "queryLines": [
+        "-- 9.2 Migration progress: mappings by status per reconciliation day in the selected range (each mapping's run of\n",
+        "-- that day).\n",
+        "SELECT date_format(run_date, 'yyyy-MM-dd') AS run_day, status, COUNT(DISTINCT mapping) AS mappings\n",
+        "FROM v_recon_runs\n",
+        "WHERE run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "GROUP BY 1, 2\n",
+        "ORDER BY 1, 2\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p9_mappings",
+      "displayName": "9 Mappings",
+      "queryLines": [
+        "-- 9.3 Mappings with their newest run up to the end of the range: rows old / new, change, mismatched columns\n",
+        "-- (type or name), rows only in the old / new table.\n",
+        "WITH r AS (\n",
+        "  SELECT *, ROW_NUMBER() OVER (PARTITION BY mapping ORDER BY execution_timestamp DESC) AS rn\n",
+        "  FROM v_recon_runs\n",
+        "  WHERE run_date <= :run_dates.max\n",
+        ")\n",
+        "SELECT mapping, old_table, new_table,\n",
+        "       CASE status WHEN 'match' THEN '🟩 match' WHEN 'partial' THEN '🟧 partial' ELSE '🟥 mismatch' END AS status,\n",
+        "       rows_old, rows_new, rows_change, type_mismatches + name_mismatches AS mismatched_columns,\n",
+        "       only_in_old, only_in_new, date_format(execution_timestamp, 'yyyy-MM-dd HH:mm') AS last_run,\n",
+        "       CASE status WHEN 'mismatch' THEN 0 WHEN 'partial' THEN 1 ELSE 2 END AS sort_key\n",
+        "FROM r WHERE rn = 1\n",
+        "ORDER BY sort_key, mapping\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p9_columns",
+      "displayName": "9 Columns with most mismatches",
+      "queryLines": [
+        "-- 9.4 Columns with the most failed column checks in the selected range: data type differs (data_types) or the\n",
+        "-- column exists on one side only (column_names). Top 10.\n",
+        "SELECT concat(col, ' · ', mapping) AS column_mapping, kind, COUNT(*) AS failed_checks\n",
+        "FROM (\n",
+        "  SELECT mapping, run_date,\n",
+        "         CASE reconciliation_type WHEN 'data_types' THEN additional_info ELSE lower(COALESCE(result_old, result_new)) END AS col,\n",
+        "         CASE reconciliation_type WHEN 'data_types' THEN 'type differs' ELSE 'name differs' END AS kind\n",
+        "  FROM v_recon_results\n",
+        "  WHERE result_status = 'fail' AND reconciliation_type IN ('data_types', 'column_names')\n",
+        "    AND run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        ")\n",
+        "GROUP BY 1, 2\n",
+        "ORDER BY failed_checks DESC, column_mapping\n",
+        "LIMIT 10\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p9_convergence",
+      "displayName": "9 Convergence",
+      "queryLines": [
+        "-- 9.5 Rows that differ (only in the old + only in the new table) per mapping and reconciliation run in the\n",
+        "-- selected range.\n",
+        "SELECT execution_timestamp, run_date, mapping, only_in_old + only_in_new AS rows_differing\n",
+        "FROM v_recon_runs\n",
+        "WHERE run_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "ORDER BY execution_timestamp\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p9_only_in",
+      "displayName": "9 Only in old vs new",
+      "queryLines": [
+        "-- 9.6 Rows only in the old table vs only in the new table per mapping, newest run up to the end of the range.\n",
+        "WITH r AS (\n",
+        "  SELECT *, ROW_NUMBER() OVER (PARTITION BY mapping ORDER BY execution_timestamp DESC) AS rn\n",
+        "  FROM v_recon_runs\n",
+        "  WHERE run_date <= :run_dates.max\n",
+        ")\n",
+        "SELECT mapping, side, rows_\n",
+        "FROM r\n",
+        "LATERAL VIEW stack(2, 'only in old', only_in_old, 'only in new', only_in_new) s AS side, rows_\n",
+        "WHERE rn = 1\n",
+        "ORDER BY mapping, side\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p10_kpis",
+      "displayName": "10 Schema change KPIs",
+      "queryLines": [
+        "-- 10.5 Schema change KPIs in the selected range: events, tables affected, columns removed, events on columns that\n",
+        "-- rules use. note = what the events come from.\n",
+        "WITH s AS (\n",
+        "  SELECT * FROM v_schema_changes\n",
+        "  WHERE event_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        ")\n",
+        "SELECT COUNT(*) AS events, COUNT(DISTINCT table_label) AS tables, COUNT_IF(change_type = 'column removed') AS removed,\n",
+        "       COUNT_IF(rules_on_column > 0) AS on_rule_columns,\n",
+        "       CASE WHEN (SELECT COUNT_IF(is_synthetic) FROM v_schema_changes) > 0 THEN 'snapshots + demo data'\n",
+        "            ELSE 'from daily column snapshots' END AS note\n",
+        "FROM s\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p10_per_day",
+      "displayName": "10 Schema changes per day",
+      "queryLines": [
+        "-- 10.5 Schema change events per day and change type in the selected range.\n",
+        "WITH s AS (\n",
+        "  SELECT * FROM v_schema_changes\n",
+        "  WHERE event_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        ")\n",
+        "SELECT event_date, change_type, COUNT(*) AS events\n",
+        "FROM s GROUP BY 1, 2 ORDER BY 1, 2\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p10_tables",
+      "displayName": "10 Tables with most changes",
+      "queryLines": [
+        "-- 10.5 Tables with the most schema change events in the selected range. Top 10.\n",
+        "WITH s AS (\n",
+        "  SELECT * FROM v_schema_changes\n",
+        "  WHERE event_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        ")\n",
+        "SELECT table_label, change_type, COUNT(*) AS events\n",
+        "FROM s GROUP BY 1, 2 ORDER BY events DESC, table_label LIMIT 10\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Date range",
+          "keyword": "run_dates",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_p10_events",
+      "displayName": "10 Schema change events",
+      "queryLines": [
+        "-- 10.5 Schema change events in the selected range, newest first: when, table, column, change, old -> new type,\n",
+        "-- rules on the column (impact), source (daily column snapshots or demo data).\n",
+        "WITH s AS (\n",
+        "  SELECT * FROM v_schema_changes\n",
+        "  WHERE event_date BETWEEN :run_dates.min AND :run_dates.max\n",
+        "  AND (size(:f_layer) = 0 OR array_contains(:f_layer, data_layer))\n",
+        "  AND (size(:f_catalog) = 0 OR array_contains(:f_catalog, catalog))\n",
+        ")\n",
+        "SELECT date_format(event_ts, 'yyyy-MM-dd HH:mm') AS changed_at, table_label, column_name, change_type,\n",
+        "       concat(COALESCE(old_type, '-'), ' -> ', COALESCE(new_type, '-')) AS type_change, rules_on_column,\n",
+        "       IF(rules_on_column > 0, '🟧 used by rules', '') AS impact, data_layer, source, event_ts\n",
+        "FROM s\n",
+        "ORDER BY event_ts DESC, table_label, column_name\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "Catalog",
+          "keyword": "f_catalog",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": []
+            }
+          }
+        },
+        {
+          "displayName": "Layer",
+          "keyword": "f_layer",
           "dataType": "STRING",
           "complexType": "MULTI",
           "defaultSelection": {
@@ -10238,6 +11170,1943 @@
       ]
     },
     {
+      "name": "configuration",
+      "displayName": "8 Configuration & Coverage",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "p8-title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Configuration & Coverage\n",
+                "\n",
+                "What is checked, what is not, and how the configuration changed. Change history: Delta history and SCD2 rows of the configuration, plus demo data."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-data-mode",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_data_mode",
+                  "fields": [
+                    {
+                      "name": "data_mode",
+                      "expression": "`data_mode`"
+                    },
+                    {
+                      "name": "data_mode_label",
+                      "expression": "`data_mode_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_mode",
+                    "displayName": "Data"
+                  },
+                  {
+                    "fieldName": "data_mode_label",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-kpi-coverage",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_kpis",
+                  "fields": [
+                    {
+                      "name": "coverage",
+                      "expression": "`coverage`"
+                    },
+                    {
+                      "name": "covered",
+                      "expression": "`covered`"
+                    },
+                    {
+                      "name": "tables",
+                      "expression": "`tables`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "coverage",
+                  "displayName": "Catalog coverage",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{@formatted}} ({{covered}} of {{tables}} tables)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Catalog coverage",
+                "description": "Tables in the schemas that hold registered tables with at least one active rule.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-kpi-registered",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_kpis",
+                  "fields": [
+                    {
+                      "name": "registered",
+                      "expression": "`registered`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "registered",
+                  "displayName": "Registered tables"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Registered tables",
+                "description": "Tables in metadata.table.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-kpi-uncovered",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_kpis",
+                  "fields": [
+                    {
+                      "name": "uncovered",
+                      "expression": "`uncovered`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "uncovered",
+                  "displayName": "Tables without rules"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables without rules",
+                "description": "No effective active rule.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-kpi-changes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_kpis",
+                  "fields": [
+                    {
+                      "name": "changes",
+                      "expression": "`changes`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "changes",
+                  "displayName": "Configuration changes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Configuration changes",
+                "description": "Change events in the selected range (all sources).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-dim-crit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_rules_dim_crit",
+                  "fields": [
+                    {
+                      "name": "rule_dimension",
+                      "expression": "`rule_dimension`"
+                    },
+                    {
+                      "name": "rules",
+                      "expression": "`rules`"
+                    },
+                    {
+                      "name": "criticality",
+                      "expression": "`criticality`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "rule_dimension",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
+                  "fieldName": "rules",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Rules"
+                  }
+                },
+                "color": {
+                  "fieldName": "criticality",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rules by dimension and criticality",
+                "description": "Effective active rule assignments.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-breakdown",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_rules_breakdown",
+                  "fields": [
+                    {
+                      "name": "rules",
+                      "expression": "`rules`"
+                    },
+                    {
+                      "name": "item",
+                      "expression": "`item`"
+                    },
+                    {
+                      "name": "state",
+                      "expression": "`state`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "rules",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Rules"
+                  }
+                },
+                "y": {
+                  "fieldName": "item",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "color": {
+                  "fieldName": "state",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "active",
+                        "color": "#2272B4"
+                      },
+                      {
+                        "value": "inactive",
+                        "color": "#9AA0A6"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rules by type, engine and apply at",
+                "description": "Active vs inactive (any is_active flag false).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-impact",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_impact",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "kind",
+                      "expression": "`kind`"
+                    },
+                    {
+                      "name": "label",
+                      "expression": "`label`"
+                    },
+                    {
+                      "name": "score",
+                      "expression": "`score`"
+                    },
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "custom-vega-viz",
+              "jsonSpec": {
+                "type": "vega-lite",
+                "spec": "{\"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\", \"data\": {\"name\": \"databricks_query\"}, \"width\": \"container\", \"height\": \"container\", \"config\": {\"autosize\": {\"type\": \"fit\", \"contains\": \"padding\"}, \"view\": {\"stroke\": null}}, \"layer\": [{\"transform\": [{\"filter\": \"datum.kind === 'score'\"}], \"mark\": {\"type\": \"line\", \"point\": true, \"color\": \"#2272B4\"}, \"encoding\": {\"x\": {\"field\": \"day\", \"type\": \"temporal\", \"title\": null}, \"y\": {\"field\": \"score\", \"type\": \"quantitative\", \"title\": \"DQ score\", \"axis\": {\"format\": \".0%\"}}, \"tooltip\": [{\"field\": \"day\", \"title\": \"Day\"}, {\"field\": \"score\", \"type\": \"quantitative\", \"title\": \"DQ score\", \"format\": \".1%\"}]}}, {\"transform\": [{\"filter\": \"datum.kind === 'change'\"}], \"mark\": {\"type\": \"rule\", \"color\": \"#E0A100\", \"strokeDash\": [4, 3], \"strokeWidth\": 2}, \"encoding\": {\"x\": {\"field\": \"day\", \"type\": \"temporal\"}, \"tooltip\": [{\"field\": \"day\", \"title\": \"Changed\"}, {\"field\": \"label\", \"title\": \"Change\"}]}}, {\"transform\": [{\"filter\": \"datum.kind === 'score'\"}, {\"window\": [{\"op\": \"row_number\", \"as\": \"rn\"}]}, {\"filter\": \"datum.rn === 1\"}], \"mark\": {\"type\": \"text\", \"align\": \"left\", \"baseline\": \"top\", \"dx\": 4, \"dy\": 4, \"fontWeight\": \"bold\"}, \"encoding\": {\"text\": {\"field\": \"table_label\"}, \"x\": {\"value\": 0}, \"y\": {\"value\": 0}}}]}"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "day"
+                  },
+                  {
+                    "fieldName": "kind"
+                  },
+                  {
+                    "fieldName": "label"
+                  },
+                  {
+                    "fieldName": "score"
+                  },
+                  {
+                    "fieldName": "table_label"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Impact of a configuration change",
+                "description": "Daily DQ score of the table with the newest rule-level change in the range (30 days up to E); dashed = change (see tooltip). Empty when the range has no rule-level change.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 7,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-uncovered",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_uncovered",
+                  "fields": [
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "reads_30d",
+                      "expression": "`reads_30d`"
+                    },
+                    {
+                      "name": "registered",
+                      "expression": "`registered`"
+                    },
+                    {
+                      "name": "data_layer",
+                      "expression": "`data_layer`"
+                    },
+                    {
+                      "name": "catalog",
+                      "expression": "`catalog`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "table_label",
+                    "displayName": "Table"
+                  },
+                  {
+                    "fieldName": "reads_30d",
+                    "displayName": "Reads (30 d)"
+                  },
+                  {
+                    "fieldName": "registered",
+                    "displayName": "Registered"
+                  },
+                  {
+                    "fieldName": "data_layer",
+                    "displayName": "Layer"
+                  },
+                  {
+                    "fieldName": "catalog",
+                    "displayName": "Catalog"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables without rules",
+                "description": "Most read first (getTable events, system.access.audit).",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 12,
+            "width": 5,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p8-change-log",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p8_change_log",
+                  "fields": [
+                    {
+                      "name": "changed_at",
+                      "expression": "`changed_at`"
+                    },
+                    {
+                      "name": "changed_by",
+                      "expression": "`changed_by`"
+                    },
+                    {
+                      "name": "change_type",
+                      "expression": "`change_type`"
+                    },
+                    {
+                      "name": "object_label",
+                      "expression": "`object_label`"
+                    },
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "field_name",
+                      "expression": "`field_name`"
+                    },
+                    {
+                      "name": "change",
+                      "expression": "`change`"
+                    },
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "changed_at",
+                    "displayName": "When"
+                  },
+                  {
+                    "fieldName": "changed_by",
+                    "displayName": "Who"
+                  },
+                  {
+                    "fieldName": "change_type",
+                    "displayName": "Change"
+                  },
+                  {
+                    "fieldName": "object_label",
+                    "displayName": "Object"
+                  },
+                  {
+                    "fieldName": "table_label",
+                    "displayName": "Table"
+                  },
+                  {
+                    "fieldName": "field_name",
+                    "displayName": "Field"
+                  },
+                  {
+                    "fieldName": "change",
+                    "displayName": "Old -> new"
+                  },
+                  {
+                    "fieldName": "source",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Configuration change log",
+                "description": "Selected range, newest first. Who: e-mail addresses are shown as a short hash.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 12,
+            "height": 8
+          }
+        }
+      ]
+    },
+    {
+      "name": "reconciliation",
+      "displayName": "9 Reconciliation",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "p9-title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Reconciliation\n",
+                "\n",
+                "Migration status: each old table compared with its new table by the reconciliation checks (row count, data types, column names, row values)."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-data-mode",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_data_mode",
+                  "fields": [
+                    {
+                      "name": "data_mode",
+                      "expression": "`data_mode`"
+                    },
+                    {
+                      "name": "data_mode_label",
+                      "expression": "`data_mode_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_mode",
+                    "displayName": "Data"
+                  },
+                  {
+                    "fieldName": "data_mode_label",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-kpi-mappings",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_kpis",
+                  "fields": [
+                    {
+                      "name": "mappings",
+                      "expression": "`mappings`"
+                    },
+                    {
+                      "name": "note",
+                      "expression": "`note`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "mappings",
+                  "displayName": "Mappings",
+                  "formatTemplate": "{{@formatted}} · {{note}}"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Mappings",
+                "description": "Old -> new table pairs. Newest run up to the end of the range.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-kpi-match",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_kpis",
+                  "fields": [
+                    {
+                      "name": "matched",
+                      "expression": "`matched`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "matched",
+                  "displayName": "Match"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Match",
+                "description": "Every check passes.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-kpi-partial",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_kpis",
+                  "fields": [
+                    {
+                      "name": "partial",
+                      "expression": "`partial`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "partial",
+                  "displayName": "Partial"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Partial",
+                "description": "Schema checks pass; rows differ by at most 1 %.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-kpi-mismatch",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_kpis",
+                  "fields": [
+                    {
+                      "name": "mismatch",
+                      "expression": "`mismatch`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "mismatch",
+                  "displayName": "Mismatch"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Mismatch",
+                "description": "Schema differs or rows differ by more than 1 %.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-progress",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_progress",
+                  "fields": [
+                    {
+                      "name": "run_day",
+                      "expression": "`run_day`"
+                    },
+                    {
+                      "name": "mappings",
+                      "expression": "`mappings`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "run_day",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
+                  "fieldName": "mappings",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "color": {
+                  "fieldName": "status",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "match",
+                        "color": "#2E9E5B"
+                      },
+                      {
+                        "value": "partial",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "mismatch",
+                        "color": "#D64545"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Migration progress",
+                "description": "Mappings by status per reconciliation day in the range.",
+                "showDescription": true
+              },
+              "mark": {
+                "layout": "stack-100"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-convergence",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_convergence",
+                  "fields": [
+                    {
+                      "name": "execution_timestamp",
+                      "expression": "`execution_timestamp`"
+                    },
+                    {
+                      "name": "rows_differing",
+                      "expression": "`rows_differing`"
+                    },
+                    {
+                      "name": "mapping",
+                      "expression": "`mapping`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "execution_timestamp",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
+                  "fieldName": "rows_differing",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "mapping",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Mapping"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Convergence across runs",
+                "description": "Rows only in the old + only in the new table, per mapping and run.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-mappings",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_mappings",
+                  "fields": [
+                    {
+                      "name": "mapping",
+                      "expression": "`mapping`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "rows_old",
+                      "expression": "`rows_old`"
+                    },
+                    {
+                      "name": "rows_new",
+                      "expression": "`rows_new`"
+                    },
+                    {
+                      "name": "rows_change",
+                      "expression": "`rows_change`"
+                    },
+                    {
+                      "name": "mismatched_columns",
+                      "expression": "`mismatched_columns`"
+                    },
+                    {
+                      "name": "only_in_old",
+                      "expression": "`only_in_old`"
+                    },
+                    {
+                      "name": "only_in_new",
+                      "expression": "`only_in_new`"
+                    },
+                    {
+                      "name": "old_table",
+                      "expression": "`old_table`"
+                    },
+                    {
+                      "name": "new_table",
+                      "expression": "`new_table`"
+                    },
+                    {
+                      "name": "last_run",
+                      "expression": "`last_run`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "mapping",
+                    "displayName": "Mapping"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "Status"
+                  },
+                  {
+                    "fieldName": "rows_old",
+                    "displayName": "Rows old"
+                  },
+                  {
+                    "fieldName": "rows_new",
+                    "displayName": "Rows new"
+                  },
+                  {
+                    "fieldName": "rows_change",
+                    "displayName": "Change",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "mismatched_columns",
+                    "displayName": "Mismatched columns"
+                  },
+                  {
+                    "fieldName": "only_in_old",
+                    "displayName": "Only in old"
+                  },
+                  {
+                    "fieldName": "only_in_new",
+                    "displayName": "Only in new"
+                  },
+                  {
+                    "fieldName": "old_table",
+                    "displayName": "Old table"
+                  },
+                  {
+                    "fieldName": "new_table",
+                    "displayName": "New table"
+                  },
+                  {
+                    "fieldName": "last_run",
+                    "displayName": "Last run"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Mappings",
+                "description": "Newest run of each mapping up to the end of the range.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-columns",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_columns",
+                  "fields": [
+                    {
+                      "name": "failed_checks",
+                      "expression": "`failed_checks`"
+                    },
+                    {
+                      "name": "column_mapping",
+                      "expression": "`column_mapping`"
+                    },
+                    {
+                      "name": "kind",
+                      "expression": "`kind`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "failed_checks",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Failed checks"
+                  }
+                },
+                "y": {
+                  "fieldName": "column_mapping",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "color": {
+                  "fieldName": "kind",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "type differs",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "name differs",
+                        "color": "#D64545"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Columns with most mismatches",
+                "description": "Failed data type / column name checks in the range. Top 10.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-only-in",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p9_only_in",
+                  "fields": [
+                    {
+                      "name": "mapping",
+                      "expression": "`mapping`"
+                    },
+                    {
+                      "name": "rows_",
+                      "expression": "`rows_`"
+                    },
+                    {
+                      "name": "side",
+                      "expression": "`side`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "mapping",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
+                  "fieldName": "rows_",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Rows"
+                  }
+                },
+                "color": {
+                  "fieldName": "side",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "only in old",
+                        "color": "#2272B4"
+                      },
+                      {
+                        "value": "only in new",
+                        "color": "#7B5EA7"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Only in old vs only in new",
+                "description": "Rows per mapping, newest run.",
+                "showDescription": true
+              },
+              "mark": {
+                "layout": "group"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 18,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p9-note",
+            "multilineTextboxSpec": {
+              "lines": [
+                "**Note.** Demo data (recon_mapping_synthetic, recon_results_synthetic, same columns as the reconciliation module's tables): there are no reconciliation runs on this workspace. With synthetic_enabled=false these widgets are empty."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "schema",
+      "displayName": "10 Schema changes",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "p10-title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Schema changes\n",
+                "\n",
+                "Columns added, removed or changed type in the monitored tables, and whether rules use them. Layer and Catalog filters apply."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-data-mode",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_data_mode",
+                  "fields": [
+                    {
+                      "name": "data_mode",
+                      "expression": "`data_mode`"
+                    },
+                    {
+                      "name": "data_mode_label",
+                      "expression": "`data_mode_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_mode",
+                    "displayName": "Data"
+                  },
+                  {
+                    "fieldName": "data_mode_label",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-kpi-events",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p10_kpis",
+                  "fields": [
+                    {
+                      "name": "events",
+                      "expression": "`events`"
+                    },
+                    {
+                      "name": "note",
+                      "expression": "`note`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "events",
+                  "displayName": "Schema changes",
+                  "formatTemplate": "{{@formatted}} · {{note}}"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schema changes",
+                "description": "Events in the selected range.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-kpi-tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p10_kpis",
+                  "fields": [
+                    {
+                      "name": "tables",
+                      "expression": "`tables`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "tables",
+                  "displayName": "Tables affected"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables affected"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-kpi-removed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p10_kpis",
+                  "fields": [
+                    {
+                      "name": "removed",
+                      "expression": "`removed`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "removed",
+                  "displayName": "Columns removed"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Columns removed"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-kpi-rules",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p10_kpis",
+                  "fields": [
+                    {
+                      "name": "on_rule_columns",
+                      "expression": "`on_rule_columns`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "on_rule_columns",
+                  "displayName": "On columns used by rules"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "On columns used by rules",
+                "description": "Events on a column that an active rule names in its parameters.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-per-day",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p10_per_day",
+                  "fields": [
+                    {
+                      "name": "event_date",
+                      "expression": "`event_date`"
+                    },
+                    {
+                      "name": "events",
+                      "expression": "`events`"
+                    },
+                    {
+                      "name": "change_type",
+                      "expression": "`change_type`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
+                  "fieldName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Events"
+                  }
+                },
+                "color": {
+                  "fieldName": "change_type",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "column added",
+                        "color": "#2272B4"
+                      },
+                      {
+                        "value": "type changed",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "column removed",
+                        "color": "#D64545"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schema changes per day",
+                "description": "Selected range.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 8,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p10_tables",
+                  "fields": [
+                    {
+                      "name": "events",
+                      "expression": "`events`"
+                    },
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "change_type",
+                      "expression": "`change_type`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Events"
+                  }
+                },
+                "y": {
+                  "fieldName": "table_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "color": {
+                  "fieldName": "change_type",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "column added",
+                        "color": "#2272B4"
+                      },
+                      {
+                        "value": "type changed",
+                        "color": "#E0A100"
+                      },
+                      {
+                        "value": "column removed",
+                        "color": "#D64545"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables with most changes",
+                "description": "Selected range. Top 10.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-events",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p10_events",
+                  "fields": [
+                    {
+                      "name": "changed_at",
+                      "expression": "`changed_at`"
+                    },
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "column_name",
+                      "expression": "`column_name`"
+                    },
+                    {
+                      "name": "change_type",
+                      "expression": "`change_type`"
+                    },
+                    {
+                      "name": "type_change",
+                      "expression": "`type_change`"
+                    },
+                    {
+                      "name": "impact",
+                      "expression": "`impact`"
+                    },
+                    {
+                      "name": "rules_on_column",
+                      "expression": "`rules_on_column`"
+                    },
+                    {
+                      "name": "data_layer",
+                      "expression": "`data_layer`"
+                    },
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "changed_at",
+                    "displayName": "When"
+                  },
+                  {
+                    "fieldName": "table_label",
+                    "displayName": "Table"
+                  },
+                  {
+                    "fieldName": "column_name",
+                    "displayName": "Column"
+                  },
+                  {
+                    "fieldName": "change_type",
+                    "displayName": "Change"
+                  },
+                  {
+                    "fieldName": "type_change",
+                    "displayName": "Old -> new type"
+                  },
+                  {
+                    "fieldName": "impact",
+                    "displayName": "Impact"
+                  },
+                  {
+                    "fieldName": "rules_on_column",
+                    "displayName": "Rules on column"
+                  },
+                  {
+                    "fieldName": "data_layer",
+                    "displayName": "Layer"
+                  },
+                  {
+                    "fieldName": "source",
+                    "displayName": "Source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schema change events",
+                "description": "Source: daily column snapshots (real) or demo data. Impact: an active rule names the column.",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "p10-note",
+            "multilineTextboxSpec": {
+              "lines": [
+                "**Note.** Real events come from the daily column snapshots (none changed so far); demo events (schema_changes_synthetic) are shown while synthetic_enabled=true. Column profiles (null %, distinct counts, distributions, drift) are not available: they need profile metrics per table and column, e.g. from Lakehouse Monitoring."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ]
+    },
+    {
       "name": "filters",
       "displayName": "Filters",
       "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
@@ -10805,6 +13674,175 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p8_kpis_run_dates",
+                "query": {
+                  "datasetName": "ds_p8_kpis",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_change_log_run_dates",
+                "query": {
+                  "datasetName": "ds_p8_change_log",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_impact_run_dates",
+                "query": {
+                  "datasetName": "ds_p8_impact",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p9_kpis_run_dates",
+                "query": {
+                  "datasetName": "ds_p9_kpis",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p9_progress_run_dates",
+                "query": {
+                  "datasetName": "ds_p9_progress",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p9_mappings_run_dates",
+                "query": {
+                  "datasetName": "ds_p9_mappings",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p9_columns_run_dates",
+                "query": {
+                  "datasetName": "ds_p9_columns",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p9_convergence_run_dates",
+                "query": {
+                  "datasetName": "ds_p9_convergence",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p9_only_in_run_dates",
+                "query": {
+                  "datasetName": "ds_p9_only_in",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_kpis_run_dates",
+                "query": {
+                  "datasetName": "ds_p10_kpis",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_per_day_run_dates",
+                "query": {
+                  "datasetName": "ds_p10_per_day",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_tables_run_dates",
+                "query": {
+                  "datasetName": "ds_p10_tables",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_events_run_dates",
+                "query": {
+                  "datasetName": "ds_p10_events",
+                  "parameters": [
+                    {
+                      "name": "run_dates",
+                      "keyword": "run_dates"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -10984,6 +14022,58 @@
                   {
                     "parameterName": "run_dates",
                     "queryName": "ds_p7_missed_runs_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p8_kpis_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p8_change_log_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p8_impact_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p9_kpis_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p9_progress_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p9_mappings_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p9_columns_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p9_convergence_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p9_only_in_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p10_kpis_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p10_per_day_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p10_tables_run_dates"
+                  },
+                  {
+                    "parameterName": "run_dates",
+                    "queryName": "ds_p10_events_run_dates"
                   }
                 ]
               },
@@ -11575,6 +14665,58 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p8_rules_dim_crit_f_project",
+                "query": {
+                  "datasetName": "ds_p8_rules_dim_crit",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_rules_breakdown_f_project",
+                "query": {
+                  "datasetName": "ds_p8_rules_breakdown",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_change_log_f_project",
+                "query": {
+                  "datasetName": "ds_p8_change_log",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_impact_f_project",
+                "query": {
+                  "datasetName": "ds_p8_impact",
+                  "parameters": [
+                    {
+                      "name": "f_project",
+                      "keyword": "f_project"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -11758,6 +14900,22 @@
                   {
                     "parameterName": "f_project",
                     "queryName": "ds_p7_missed_runs_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p8_rules_dim_crit_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p8_rules_breakdown_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p8_change_log_f_project"
+                  },
+                  {
+                    "parameterName": "f_project",
+                    "queryName": "ds_p8_impact_f_project"
                   }
                 ]
               },
@@ -12310,6 +15468,136 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p8_kpis_f_layer",
+                "query": {
+                  "datasetName": "ds_p8_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_rules_dim_crit_f_layer",
+                "query": {
+                  "datasetName": "ds_p8_rules_dim_crit",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_rules_breakdown_f_layer",
+                "query": {
+                  "datasetName": "ds_p8_rules_breakdown",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_uncovered_f_layer",
+                "query": {
+                  "datasetName": "ds_p8_uncovered",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_change_log_f_layer",
+                "query": {
+                  "datasetName": "ds_p8_change_log",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_impact_f_layer",
+                "query": {
+                  "datasetName": "ds_p8_impact",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_kpis_f_layer",
+                "query": {
+                  "datasetName": "ds_p10_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_per_day_f_layer",
+                "query": {
+                  "datasetName": "ds_p10_per_day",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_tables_f_layer",
+                "query": {
+                  "datasetName": "ds_p10_tables",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_events_f_layer",
+                "query": {
+                  "datasetName": "ds_p10_events",
+                  "parameters": [
+                    {
+                      "name": "f_layer",
+                      "keyword": "f_layer"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -12481,6 +15769,46 @@
                   {
                     "parameterName": "f_layer",
                     "queryName": "ds_p7_alert_outcomes_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p8_kpis_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p8_rules_dim_crit_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p8_rules_breakdown_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p8_uncovered_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p8_change_log_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p8_impact_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p10_kpis_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p10_per_day_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p10_tables_f_layer"
+                  },
+                  {
+                    "parameterName": "f_layer",
+                    "queryName": "ds_p10_events_f_layer"
                   }
                 ]
               },
@@ -13033,6 +16361,136 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p8_kpis_f_catalog",
+                "query": {
+                  "datasetName": "ds_p8_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_rules_dim_crit_f_catalog",
+                "query": {
+                  "datasetName": "ds_p8_rules_dim_crit",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_rules_breakdown_f_catalog",
+                "query": {
+                  "datasetName": "ds_p8_rules_breakdown",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_uncovered_f_catalog",
+                "query": {
+                  "datasetName": "ds_p8_uncovered",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_change_log_f_catalog",
+                "query": {
+                  "datasetName": "ds_p8_change_log",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_impact_f_catalog",
+                "query": {
+                  "datasetName": "ds_p8_impact",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_kpis_f_catalog",
+                "query": {
+                  "datasetName": "ds_p10_kpis",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_per_day_f_catalog",
+                "query": {
+                  "datasetName": "ds_p10_per_day",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_tables_f_catalog",
+                "query": {
+                  "datasetName": "ds_p10_tables",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p10_events_f_catalog",
+                "query": {
+                  "datasetName": "ds_p10_events",
+                  "parameters": [
+                    {
+                      "name": "f_catalog",
+                      "keyword": "f_catalog"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -13204,6 +16662,46 @@
                   {
                     "parameterName": "f_catalog",
                     "queryName": "ds_p7_alert_outcomes_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p8_kpis_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p8_rules_dim_crit_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p8_rules_breakdown_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p8_uncovered_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p8_change_log_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p8_impact_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p10_kpis_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p10_per_day_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p10_tables_f_catalog"
+                  },
+                  {
+                    "parameterName": "f_catalog",
+                    "queryName": "ds_p10_events_f_catalog"
                   }
                 ]
               },
@@ -13743,6 +17241,58 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p8_rules_dim_crit_f_criticality",
+                "query": {
+                  "datasetName": "ds_p8_rules_dim_crit",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_rules_breakdown_f_criticality",
+                "query": {
+                  "datasetName": "ds_p8_rules_breakdown",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_change_log_f_criticality",
+                "query": {
+                  "datasetName": "ds_p8_change_log",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_impact_f_criticality",
+                "query": {
+                  "datasetName": "ds_p8_impact",
+                  "parameters": [
+                    {
+                      "name": "f_criticality",
+                      "keyword": "f_criticality"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -13910,6 +17460,22 @@
                   {
                     "parameterName": "f_criticality",
                     "queryName": "ds_p7_alert_outcomes_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p8_rules_dim_crit_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p8_rules_breakdown_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p8_change_log_f_criticality"
+                  },
+                  {
+                    "parameterName": "f_criticality",
+                    "queryName": "ds_p8_impact_f_criticality"
                   }
                 ]
               },
@@ -14462,6 +18028,58 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "ds_p8_rules_dim_crit_f_dimension",
+                "query": {
+                  "datasetName": "ds_p8_rules_dim_crit",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_rules_breakdown_f_dimension",
+                "query": {
+                  "datasetName": "ds_p8_rules_breakdown",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_change_log_f_dimension",
+                "query": {
+                  "datasetName": "ds_p8_change_log",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "ds_p8_impact_f_dimension",
+                "query": {
+                  "datasetName": "ds_p8_impact",
+                  "parameters": [
+                    {
+                      "name": "f_dimension",
+                      "keyword": "f_dimension"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -14633,6 +18251,22 @@
                   {
                     "parameterName": "f_dimension",
                     "queryName": "ds_p7_alert_outcomes_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p8_rules_dim_crit_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p8_rules_breakdown_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p8_change_log_f_dimension"
+                  },
+                  {
+                    "parameterName": "f_dimension",
+                    "queryName": "ds_p8_impact_f_dimension"
                   }
                 ]
               },

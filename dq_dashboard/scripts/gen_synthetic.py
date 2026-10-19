@@ -4,7 +4,8 @@
 
 What it writes: ONLY these tables of {{dq_catalog}}.{{dashboard_schema}} (full regenerate: each table is emptied,
 then refilled): results_synthetic, rule_assignment_synthetic, quarantine_lifecycle_synthetic,
-incident_triage_synthetic, alert_log_synthetic. It never writes to results.*, configuration.*, metadata.* or
+incident_triage_synthetic, alert_log_synthetic, config_changes_synthetic, recon_mapping_synthetic,
+recon_results_synthetic, schema_changes_synthetic. It never writes to results.*, configuration.*, metadata.* or
 quarantine.*.
 
 How the rows are built:
@@ -21,6 +22,9 @@ How the rows are built:
   * After the results are written: the quarantine lifecycle (entry / exit time and outcome per quarantined rule
     result), the triage of the derived incidents (owning team, acknowledgement) and the alerts with their outcome,
     read back from the dashboard views (v_results_all, v_incidents) so that they match what the dashboard derives.
+  * Also: configuration change history of the demo rules (3 of them disabled, so their results stop), a
+    reconciliation of 8 migrated tables (checks of the reconciliation module, converging over the runs), and schema
+    change events consistent with today's schemas (columns_snapshot).
   * random.Random(seed) and uuid5 ids: the same seed gives byte-identical rows.
 
 Guards: sandbox_enabled and synthetic_enabled must be true; the host guard of env_config applies.
@@ -41,7 +45,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import env_config  # noqa: E402
 
 TABLE = "results_synthetic"
-TABLES = ("results_synthetic", "rule_assignment_synthetic", "quarantine_lifecycle_synthetic",
+TABLES = ("results_synthetic", "rule_assignment_synthetic", "quarantine_lifecycle_synthetic", "config_changes_synthetic",
+          "recon_mapping_synthetic", "recon_results_synthetic", "schema_changes_synthetic",
           "incident_triage_synthetic", "alert_log_synthetic")
 NS = uuid.UUID("6f1c2a52-3d4e-4b8a-9c0d-5e7f81a2b3c4")
 MAX_PAYLOAD = 450_000                    # bytes of base64 per INSERT (the statement travels as a CLI argument)
@@ -314,7 +319,7 @@ DEMO_RULES = {
                      "description": "Rows loaded are at least 90 % of the previous load"},
     "consistency": {"template_id": 9102, "rule_name": "referential_integrity", "dimension_id": 3, "policy_id": 9202,
                     "criticality": "medium", "category": "warning", "scope": "column", "quarantine": True,
-                    "params": lambda t: (json.dumps({"column": t["pk"][0]}) if t["pk"] else None, '{"max_orphans": 0}'),
+                    "params": lambda t: (json.dumps({"column": t["pk"][0]}) if t["pk"] else None, '{"max_orphans": 5}'),
                     "share": 0.45, "profile": ("noisy", 0.08, 0.5), "table_check": False,
                     "description": "Every key exists in the reference table"},
     "timeliness": {"template_id": 9103, "rule_name": "freshness_check", "dimension_id": 9105, "policy_id": 9203,
@@ -325,6 +330,7 @@ DEMO_RULES = {
                    "description": "The newest partition is at most 30 hours old"},
 }
 DEMO_ID0 = 900000                         # demo assignment ids start here (real ids are far below)
+DISABLE_DAY = 45                          # day index on which 3 demo rules are disabled (no results afterwards)
 CRIT_WEIGHT = {"high": 3, "medium": 2, "low": 1}
 
 
@@ -358,6 +364,8 @@ def assignment_rows(demo, first_day):
     rows = []
     for aid, a in sorted(demo.items()):
         t, d = a["tmpl"], a["d"]
+        off = a.get("disabled_day")
+        valid_to = dt.datetime.combine(first_day + dt.timedelta(days=off), dt.time(9, 0), dt.timezone.utc) if off else None
         rows.append({
             "rule_assignment_id": aid, "table_id": a["table_id"], "project_id": t["project_id"],
             "rule_template_id": d["template_id"], "policy_id": d["policy_id"], "apply_at_id": None,
@@ -367,9 +375,9 @@ def assignment_rows(demo, first_day):
             "rule_name": d["rule_name"], "rule_type": "technical", "engine_type": "sql", "rule_scope": d["scope"],
             "policy_category": d["category"], "quarantine_status": d["quarantine"],
             "parameters_identifiers": a["ident"], "parameters_values": a["values"],
-            "assignment_is_active": True, "template_is_active": True, "policy_is_active": True,
-            "table_is_active": True, "apply_at_is_active": True, "is_effective_active": True,
-            "valid_from": dt.datetime.combine(first_day, dt.time(0, 0), dt.timezone.utc), "valid_to": None,
+            "assignment_is_active": off is None, "template_is_active": True, "policy_is_active": True,
+            "table_is_active": True, "apply_at_is_active": True, "is_effective_active": off is None,
+            "valid_from": dt.datetime.combine(first_day, dt.time(0, 0), dt.timezone.utc), "valid_to": valid_to,
             "added_by": "demo data", "is_synthetic": True})
     return rows
 
@@ -412,6 +420,8 @@ def build_demo_rules(seed, assignments, tables, synth_rows, real_rows, incidents
     demo = demo_assignments(rng, assignments, tables)
     for aid, a in demo.items():
         a["_id"] = aid
+    for aid in random.Random(seed + 17).sample(sorted(demo), 3):
+        demo[aid]["disabled_day"] = DISABLE_DAY
     by_table = {}
     for aid, a in sorted(demo.items()):
         by_table.setdefault((a["scope"], a["table_id"]), []).append(aid)
@@ -438,6 +448,8 @@ def build_demo_rules(seed, assignments, tables, synth_rows, real_rows, incidents
         scope = scope_of(ctx["apply_at"], ctx["project"])
         for aid in by_table.get((scope, int(ctx["table_id"])), []):
             a = demo[aid]
+            if i >= a.get("disabled_day", 10 ** 6):
+                continue
             if (aid, i) not in status_of_day:
                 st = a["profile"].next(rng, 1.0)
                 if any(s0 <= i < s0 + ln and s == scope and t == a["table_id"] for s0, ln, s, t in incidents):
@@ -530,6 +542,139 @@ def build_triage_alerts(seed, incidents, as_of):
     return triage, alerts
 
 
+def build_config_changes(seed, demo, first_day, incidents, as_of, columns):
+    """Configuration change history of the demo rules, consistent with their results: added on the first day,
+    3 disabled on DISABLE_DAY (no results afterwards), thresholds loosened a few hours before the passing run that
+    ended a failing streak of 2+ days (old value = tighter, new value = current), referential-integrity column
+    changed (old = another column, new = current)."""
+    rng = random.Random(seed + 19)
+    out = []
+    def add(ts, by, kind, aid, field=None, old=None, new=None):
+        out.append({"change_id": str(uuid.uuid5(NS, f"c|{aid}|{kind}|{ts.isoformat()}")), "change_ts": ts,
+                    "changed_by": by, "change_type": kind, "rule_assignment_id": aid,
+                    "table_id": demo[aid]["table_id"], "field_name": field, "old_value": old, "new_value": new,
+                    "is_synthetic": True})
+    for aid, a in sorted(demo.items()):
+        by = team_of(a["tmpl"]["schema"])
+        add(dt.datetime.combine(first_day, dt.time(8, rng.randint(0, 59)), dt.timezone.utc), by, "rule added", aid,
+            "rule_template", None, a["d"]["rule_name"])
+        if a.get("disabled_day"):
+            add(dt.datetime.combine(first_day + dt.timedelta(days=a["disabled_day"]), dt.time(9, 0), dt.timezone.utc),
+                by, "rule disabled", aid, "is_active", "true", "false")
+        t = a["tmpl"]
+        others = [c for c in columns.get((t["catalog"], t["schema"], t["table_name"]), {})
+                  if a["ident"] and json.dumps({"column": c}) != a["ident"]]
+        if a["dim"] == "consistency" and others and rng.random() < 0.3:
+            ts = dt.datetime.combine(first_day + dt.timedelta(days=rng.randint(5, 40)), dt.time(10, 15), dt.timezone.utc)
+            add(ts, by, "rule changed", aid, "parameters_identifiers", json.dumps({"column": rng.choice(others)}),
+                a["ident"])
+    tighter = {"completeness": '{"min_ratio_vs_previous": 0.95}', "consistency": '{"max_orphans": 0}',
+               "timeliness": '{"max_age_hours": 26}'}           # previous (tighter) value; the current one is new
+    changed = set()
+    for inc in sorted(incidents, key=lambda x: (x["resolved_ts"] or as_of, x["incident_key"]), reverse=True):
+        a = demo.get(inc["rule_assignment_id"])
+        if not a or a["_id"] in changed or not inc["resolved_ts"] or inc["failing_runs"] < 2 or rng.random() > 0.6:
+            continue
+        changed.add(a["_id"])
+        add(inc["resolved_ts"] - dt.timedelta(hours=rng.uniform(2, 6)), team_of(a["tmpl"]["schema"]),
+            "threshold changed", inc["rule_assignment_id"], "parameters_values", tighter[a["dim"]], a["values"])
+    return [r for r in out if r["change_ts"] <= as_of]
+
+
+SPARK_TYPE = {"int": "IntegerType()", "bigint": "LongType()", "string": "StringType()", "date": "DateType()",
+              "double": "DoubleType()", "boolean": "BooleanType()", "timestamp": "TimestampType()"}
+LEGACY_TYPE = {"IntegerType()": "StringType()", "DateType()": "StringType()", "DoubleType()": "DecimalType(18,2)",
+               "StringType()": "VarcharType(50)", "LongType()": "IntegerType()", "BooleanType()": "StringType()"}
+
+
+def build_recon(seed, columns, volumes, first_day, ndays_total, as_of):
+    """A migration of 8 tables (legacy copy -> registered table) reconciled every 3 days with the checks of the
+    reconciliation module; mismatches converge: type and name mismatches are fixed at a run, missing rows decay.
+    Final states: most mappings match, some partial, one or two still mismatch."""
+    rng = random.Random(seed + 23)
+    cands = sorted(k for k in columns if len(columns[k]) >= 3 and volumes.get(k))
+    picked = rng.sample(cands, min(8, len(cands)))
+    mapping, results = [], []
+    finals = ["match", "match", "match", "match", "partial", "partial", "mismatch", "mismatch"]
+    for n, key in enumerate(picked):
+        cat, sch, tbl = key
+        name, old_t, new_t = f"{sch}.{tbl}", f"legacy_sas.{sch}_{tbl}", f"{cat}.{sch}.{tbl}"
+        mapping.append({"table_name": name, "old": old_t, "new": new_t, "is_synthetic": True})
+        cols = columns[key]
+        final = finals[n % len(finals)]
+        names = list(cols)
+        bad_types = rng.sample(names, min(len(names), rng.randint(1, 3)))
+        bad_names = rng.sample([c for c in names if c not in bad_types], min(2, len(names) - len(bad_types)))
+        fix_types = rng.randint(4, 12) if final != "mismatch" else 10 ** 6
+        fix_names = rng.randint(2, 8) if final != "mismatch" or rng.random() < 0.5 else 10 ** 6
+        miss0, rows0 = rng.uniform(0.02, 0.08), volumes[key]
+        residual = {"match": 0.0, "partial": rng.uniform(0.001, 0.006), "mismatch": rng.uniform(0.015, 0.03)}[final]
+        for k, day in enumerate(range(0, ndays_total, 3)):
+            ts = dt.datetime.combine(first_day + dt.timedelta(days=day), dt.time(5, 0), dt.timezone.utc) + \
+                dt.timedelta(minutes=10 * n)
+            if ts > as_of:
+                break
+            rows_old = round(rows0 * (0.9 + 0.1 * day / ndays_total))
+            share = max(residual, miss0 * math.exp(-k / 3.0)) if final != "match" or k < 12 else 0.0
+            in_new = round(rows_old * share * rng.uniform(0.5, 0.8))
+            in_old = round(rows_old * share * rng.uniform(0.1, 0.4))
+            rows_new = rows_old - in_new + in_old
+            base = {"execution_timestamp": ts, "table": name, "old_table": old_t, "new_table": new_t,
+                    "is_synthetic": True}
+            results.append({**base, "reconciliation_type": "row_count", "result_old": str(rows_old),
+                            "result_new": str(rows_new), "additional_info": None,
+                            "result_status": "pass" if rows_old == rows_new else "fail"})
+            for c, typ in cols.items():
+                new_type = SPARK_TYPE.get(typ.lower(), "StringType()")
+                old_type = LEGACY_TYPE.get(new_type, new_type) if c in bad_types and k < fix_types else new_type
+                if c in bad_names and k < fix_names:
+                    continue
+                results.append({**base, "reconciliation_type": "data_types", "result_old": old_type,
+                                "result_new": new_type, "additional_info": c,
+                                "result_status": "pass" if old_type == new_type else "fail"})
+            for c in cols:
+                if c in bad_names and k < fix_names:
+                    for o, nw in ((c.upper(), None), (None, c)):
+                        results.append({**base, "reconciliation_type": "column_names", "result_old": o,
+                                        "result_new": nw, "additional_info": None, "result_status": "fail"})
+                else:
+                    results.append({**base, "reconciliation_type": "column_names", "result_old": c, "result_new": c,
+                                    "additional_info": None, "result_status": "pass"})
+            same = in_new == 0 and in_old == 0
+            results.append({**base, "reconciliation_type": "row_values",
+                            "result_old": "same_row_values" if same else str(in_new),
+                            "result_new": "same_row_values" if same else str(in_old), "additional_info": None,
+                            "result_status": "pass" if same else "fail"})
+    return mapping, results
+
+
+def build_schema_changes(seed, columns, first_day, ndays):
+    """Column added / type changed / removed events in the synthetic history, consistent with today's schemas
+    (columns_snapshot): added and type-changed columns exist today with the new type; removed columns do not."""
+    rng = random.Random(seed + 29)
+    old_of = {"int": "string", "bigint": "int", "date": "string", "double": "decimal(18,2)", "string": "varchar(50)",
+              "boolean": "string", "timestamp": "string"}
+    out = []
+    for key in rng.sample(sorted(columns), min(18, len(columns))):
+        cat, sch, tbl = key
+        cols = list(columns[key].items())
+        for _ in range(rng.randint(1, 2)):
+            u = rng.random()
+            col, typ = rng.choice(cols)
+            ts = dt.datetime.combine(first_day + dt.timedelta(days=rng.randint(2, ndays - 2)),
+                                     dt.time(rng.randint(0, 5), rng.randint(0, 59)), dt.timezone.utc)
+            if u < 0.4:
+                ev = ("column added", None, typ)
+            elif u < 0.75:
+                ev = ("type changed", old_of.get(typ.lower(), "string"), typ)
+            else:
+                col, ev = f"{col}_old", ("column removed", typ, None)
+            out.append({"event_ts": ts, "table_catalog": cat, "table_schema": sch, "table_name": tbl,
+                        "column_name": col, "change_type": ev[0], "old_type": ev[1], "new_type": ev[2],
+                        "is_synthetic": True})
+    return sorted(out, key=lambda r: (r["event_ts"], r["table_name"], r["column_name"]))
+
+
 def to_json(v):
     if isinstance(v, dt.datetime):
         return v.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -600,6 +745,27 @@ def main():
     triage, alerts = build_triage_alerts(a.seed, incs, as_of)
     write(env, "incident_triage_synthetic", triage, False)
     write(env, "alert_log_synthetic", alerts, False)
+    # current schemas of the registered tables (newest columns_snapshot day) and their row volumes
+    snap = fetch(env, f"""SELECT c.table_catalog, c.table_schema, c.table_name, c.column_name, c.data_type
+        FROM {env.sb}.columns_snapshot c
+        WHERE c.simulated_date = (SELECT MAX(simulated_date) FROM {env.sb}.columns_snapshot)
+        ORDER BY 1, 2, 3, c.ordinal_position""")
+    columns = {}
+    for r in snap:
+        columns.setdefault((r["table_catalog"], r["table_schema"], r["table_name"]), {})[r["column_name"]] = r["data_type"]
+    vols = {(r["catalog"], r["schema"], r["table_name"]): int(float(r["v"])) for r in fetch(env, f"""
+        SELECT catalog, `schema`, table_name, percentile_approx(rows_evaluated, 0.5) AS v
+        FROM {env.sb}.v_results_ext WHERE row_level = 'rule' AND rows_evaluated IS NOT NULL GROUP BY 1, 2, 3""")}
+    write(env, "config_changes_synthetic", build_config_changes(a.seed, demo, syn_days[0], incs, as_of, columns), False)
+    ndays_total = (last_recorded_day(env) - syn_days[0]).days + 1
+    mapping, recon = build_recon(a.seed, columns, vols, syn_days[0], ndays_total, as_of)
+    write(env, "recon_mapping_synthetic", mapping, False)
+    write(env, "recon_results_synthetic", recon, False)
+    write(env, "schema_changes_synthetic", build_schema_changes(a.seed, columns, syn_days[0], a.days), False)
+
+
+def last_recorded_day(env):
+    return dt.date.fromisoformat(fetch(env, f"SELECT CAST(recorded_last_day AS STRING) AS d FROM {env.sb}.v_date_shift")[0]["d"])
 
 
 def write(env, table, rows, dry_run, extra=""):
