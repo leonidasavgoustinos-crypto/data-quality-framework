@@ -17,10 +17,10 @@ sandbox-only action is refused). See `docs/MIGRATION.md` for the switch to `comp
 | Path | Content |
 |---|---|
 | `bundle/` | `databricks.yml` (targets, variables), `resources/` (job, dashboard), `src/driver/` (driver, env config, helpers, build manifest), `src/dashboards/` |
-| `scripts/` | `build_patched.sh` (wheel), `check_host.sh` (deploy host check), `gen_ddl.py`, `run_ddl.py`, `teardown.py`, `test_guards.py` |
-| `ddl/` | `01_sources.sql` (sandbox source tables), `02_capture.sql` (capture tables, all targets), `03_sandbox.sql`, `teardown.sql` (template), `registered_tables.json` |
+| `scripts/` | `build_patched.sh` (wheel), `check_host.sh` (deploy host check), `gen_ddl.py`, `gen_synthetic.py`, `run_ddl.py`, `teardown.py`, `test_guards.py` |
+| `ddl/` | `01_sources.sql` (sandbox source tables), `02_capture.sql` (capture tables, all targets), `03_sandbox.sql`, `04`–`07` (dashboard views, `*_synthetic` tables), `teardown.sql` (template), `registered_tables.json` |
 | `patches/` | framework fixes: one `.diff` + `.md` each, `APPLY_AT_END.md`, `tests/` (local, no Databricks) |
-| `tests/` | local test for the driver's `run_calendar.call_status` |
+| `tests/` | local test for the driver's `run_calendar.call_status`; warehouse test for `is_latest_for_day` |
 | `docs/` | `MIGRATION.md`, `framework_findings.md`, `framework-findings-for-colleague.md` |
 
 ## Prerequisites
@@ -94,12 +94,29 @@ The dashboard datasets read only the `v_*` views in the dashboard schema. Create
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/04_v_results_ext.sql
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/05_synthetic_tables.sql
 python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/06_dashboard_views.sql
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/07_rule_daily.sql
 ```
+`run_ddl.py` leaves an existing view as it is. To roll out a changed view definition, run the view file again in the
+separate replace mode (views only, see the `run_ddl.py` docstring for its checks):
+```bash
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/06_dashboard_views.sql --replace-views          # lists the views, executes nothing
+python3 -I dq_dashboard/scripts/run_ddl.py --target free dq_dashboard/ddl/06_dashboard_views.sql --replace-views --yes    # CREATE OR REPLACE VIEW
+```
+It accepts only `CREATE VIEW IF NOT EXISTS` statements for views of the dashboard schema that carry the
+`dq_dashboard sandbox - generated` comment, and refuses tables, other schemas and unmarked views.
 - `05_synthetic_tables.sql` creates the `*_synthetic` tables. Each has the columns of the real view it complements
   plus `is_synthetic`. In `company` they stay empty.
 - The views combine real and synthetic rows through one switch, `{{use_synthetic}}` = bundle variable
   `synthetic_enabled` (true in `free`, false in `company`). With false only real rows are read; every page shows
   the data mode in its "Data" widget ("Demo data" while synthetic rows are included).
+- Demo date shift: while `use_synthetic` is true, the views move the dashboard dates (`run_date`, `run_ts`,
+  `run_end_ts`, date-like `partition_value`) so that the newest data day is today; the shift is computed only in
+  `v_date_shift` and shown in the "Data" widget. `recorded_run_date` keeps the recorded date. With false there is no
+  shift.
+- `is_latest_for_day` (one row per day, table, scope and rule assignment): a table-level row (table fault) is not
+  latest when a later call of the same day, scope and table exists (rerun). `tests/test_latest_flag.py` checks the
+  expression on inline rows.
+- `v_rule_daily` (07): latest status per rule assignment and day with flips and streaks (Tables and Rules pages).
 - Demo history (sandbox only, deterministic, regenerates the table in full):
   ```bash
   python3 -I dq_dashboard/scripts/gen_synthetic.py --target free --dry-run   # row counts + content checksum
@@ -121,6 +138,10 @@ On `company`, only step 1 is allowed, and nothing is ever dropped.
 python3 -I dq_dashboard/scripts/test_guards.py
 python3 -I dq_dashboard/tests/test_driver_call_status.py --driver dq_dashboard/bundle/src/driver/dq_backfill_driver.py --expect new
 cd dq_dashboard/patches/tests && python3 -I test_framework_patches.py --framework <repo copy> --stage 04
+```
+Warehouse test (read-only, one SELECT on inline rows):
+```bash
+python3 -I dq_dashboard/tests/test_latest_flag.py --target free
 ```
 
 ## Framework fixes

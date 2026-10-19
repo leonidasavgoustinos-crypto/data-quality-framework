@@ -13,6 +13,8 @@
 -- (run_ts keeps the real time of day); otherwise, or without a calendar row, the real start of the execution.
 -- is_latest_for_day: TRUE for the newest row per (run_date, table_id, apply_at, project, rule assignment). Daily
 -- widgets filter on it so that reruns of a day are not double-counted; run-history widgets keep every row.
+-- A table-level row (table fault) is not latest when a later call of the same (run_date, table_id, apply_at,
+-- project) exists, e.g. a rerun after the fault.
 -- rows_quarantined: rows written to quarantine by that rule result, from dashboard_schema.quarantine_snapshot
 -- (the quarantine tables only hold the latest run). NULL = no snapshot row for that rule result.
 -- crit_weight: high = 3, medium = 2, low = 1 (weighted DQ score). is_scored: pass, warning or error;
@@ -104,8 +106,14 @@ ext AS (
 )
 SELECT
   *,
+  -- latest_flag:begin (same expression in 06_dashboard_views.sql v_results_all; tested by tests/test_latest_flag.py)
   ROW_NUMBER() OVER (
     PARTITION BY run_date, table_id, apply_at, project, COALESCE(rule_assignment_id, -1)
     ORDER BY start_timestamp DESC, result_id DESC
-  ) = 1 AS is_latest_for_day
+  ) = 1
+  AND (row_level = 'rule'
+       OR named_struct('ts', COALESCE(start_timestamp_execution, start_timestamp), 'id', result_id)
+          <=> MAX(named_struct('ts', COALESCE(start_timestamp_execution, start_timestamp), 'id', result_id))
+              OVER (PARTITION BY run_date, table_id, apply_at, project)) AS is_latest_for_day
+  -- latest_flag:end
 FROM ext;
