@@ -5,12 +5,12 @@ from .utils import *
 from .logging import *
 
 
-def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, full_table_name=None, df_input=None, display_logs=None):
+def run_data_quality(apply_at, run_mode, filter_values=None, project_name=None, full_table_name=None, df_input=None, display_logs=None, full_scan=False):
 
     try:
         params = RunTimeParams()
 
-        load_params_user_input(params, apply_at, filter_values, project_name, full_table_name, run_mode, display_logs)
+        load_params_user_input(params, apply_at, filter_values, project_name, full_table_name, run_mode, display_logs, full_scan)
 
         log_start(params)
 

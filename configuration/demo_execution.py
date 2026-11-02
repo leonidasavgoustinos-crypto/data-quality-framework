@@ -445,3 +445,26 @@ dbutils.notebook.run("./06_rule_template", 0, {
 
 # MAGIC %sql
 # MAGIC SELECT * FROM analytics_dq_dev.configuration.rule_template;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM analytics_dq_dev.configuration.rule_assignment;
+
+# COMMAND ----------
+
+# %sql
+
+# TRUNCATE TABLE analytics_dq_dev.metadata.rule_type;
+# TRUNCATE TABLE analytics_dq_dev.metadata.rule_dimension;
+# TRUNCATE TABLE analytics_dq_dev.metadata.project;
+# TRUNCATE TABLE analytics_dq_dev.metadata.table;
+
+# TRUNCATE TABLE analytics_dq_dev.configuration.run_policy;
+# TRUNCATE TABLE analytics_dq_dev.configuration.apply_at;
+# TRUNCATE TABLE analytics_dq_dev.configuration.rule_template;
+# TRUNCATE TABLE analytics_dq_dev.configuration.rule_assignment;
+
+# TRUNCATE TABLE analytics_dq_dev.results.result;
+# TRUNCATE TABLE analytics_dq_dev.results.result_table;
+# TRUNCATE TABLE analytics_dq_dev.results.result_rule;

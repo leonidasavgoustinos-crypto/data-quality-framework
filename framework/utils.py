@@ -376,6 +376,9 @@ def filter_by_filter_field(params, df_input):
  
     values = values_dict.get(field_type) 
  
+    if params.config.full_scan:
+        return df
+
     if values is None:
         max_value = df.select(F.max(F.col(field))).first()[0]
         df = df.filter(F.col(field) == max_value)
@@ -553,8 +556,9 @@ def load_params_rows_info(params, df_filtered_by_filter_field, df_errors):
     params.result.rows_pass = params.result.rows_evaluated - params.result.rows_failed 
 
 
-def load_params_user_input(params, apply_at, filter_values, project_name, full_table_name, run_mode, display_logs):
+def load_params_user_input(params, apply_at, filter_values, project_name, full_table_name, run_mode, display_logs, full_scan):
 
+    params.config.full_scan = full_scan
     params.config.apply_at = apply_at
     params.meta.full_table_name = full_table_name
     params.config.run_mode = run_mode
