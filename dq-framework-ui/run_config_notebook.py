@@ -7,7 +7,7 @@
 dbutils.widgets.text("notebook", "")
 dbutils.widgets.text("params", "{}")
 # Folder with the configuration notebooks (the Git folder of the framework)
-dbutils.widgets.text("config_folder", "/Workspace/Users/maria.verouchi@ms.d-one.ai/dq/configuration")
+dbutils.widgets.text("config_folder", "../configuration")
 
 # COMMAND ----------
 
@@ -30,4 +30,3 @@ if params.get("action") not in ("insert/update", "delete"):
 print(f"Running {folder}/{notebook} with {params}")
 result = dbutils.notebook.run(f"{folder}/{notebook}", 600, {k: str(v) for k, v in params.items()})
 dbutils.notebook.exit(result or "ok")
-
