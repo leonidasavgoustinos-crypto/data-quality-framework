@@ -1,0 +1,10 @@
+command: ["streamlit", "run", "app.py"]
+
+env:
+  - name: "DQ_ENV"
+    value: "dev"
+  - name: "DATABRICKS_WAREHOUSE_ID"
+    valueFrom: "sql-warehouse"
+  # Job "dq-ui-config-runner" (runs run_config_notebook -> notebooks 01–08)
+  - name: "CONFIG_JOB_ID"
+    valueFrom: "config-job"
