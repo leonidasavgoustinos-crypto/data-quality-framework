@@ -4,7 +4,8 @@ import os
 cwd = os.getcwd()
 sys.path.append(os.path.abspath(os.path.join(cwd, '..', '..')))
 
-from databricks.sdk.runtime import dbutils 
+from databricks.sdk.runtime import dbutils
+from pyspark.sql import functions as F
 from framework.dq_framework import run_data_quality
 
 
@@ -66,7 +67,7 @@ def run_dq_and_insert(
         target_table=full_table_name
     )
 
-    job_id = run_data_quality(
+    result_id = run_data_quality(
         apply_at=apply_at_value,
         run_mode=run_mode,
         full_table_name=full_table_name,
@@ -74,14 +75,15 @@ def run_dq_and_insert(
         df_input=df_input,
         display_logs=display_logs
     )
+
     dq_status = (
-        spark.table(f"analytics_audit.{env}.processing_job_status")
+        spark.table(f"analytics_dq_{env}.results.result")
              .select("status")
-             .where(f"job_id = '{job_id}'")
+             .where(F.col("result_id") == result_id)
              .collect()
     )
 
-    if dq_status and dq_status[0]["status"] == "failed":
+    if not dq_status or dq_status[0]["status"] != "pass":
         dbutils.notebook.exit(f"❌ Data Quality failed for table {full_table_name}. Insert skipped.")
 
     print(f"✅ Data Quality passed for table {full_table_name}. Proceeding with insert.")

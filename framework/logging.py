@@ -72,31 +72,37 @@ def log_table_header(table_id, params, assignment_count):
     print("=" * 55 + "\n")
 
 
-def log_rule_start(params, assignment_id):
+def log_warning(message):
+    print(f"WARNING: {message}")
+
+
+def log_table_rules(params):
     if params.result.display_logs == False:
         return
-    print("=" * 55)
-    print("                     RULE START")
-    print("-" * 55)
-    print(f"Rule Assignment ID : {assignment_id}")
-    print(f"Rule Template ID   : {params.config.rule_template_id}")
-    print(f"Rule Name          : {params.config.rule_name}")
-    print(f"Category           : {params.config.category}")
-    print(f"Engine Type        : {params.config.engine_type}")
-    print(f"Parameters         : {params.config.parameters}")
-    print(f"Statement          : {params.config.statement}")
-    print("=" * 55)
+    for rule in params.config.rules:
+        print("=" * 55)
+        print("                     RULE")
+        print("-" * 55)
+        print(f"Rule Assignment ID : {rule.rule_assignment_id}")
+        print(f"Rule Template ID   : {rule.rule_template_id}")
+        print(f"Rule Name          : {rule.rule_name}")
+        print(f"Category           : {rule.category}")
+        print(f"Engine Type        : {rule.engine_type}")
+        print(f"Parameters         : {rule.parameters}")
+        print(f"Statement          : {rule.statement}")
+        print("=" * 55)
 
 
-def log_rule_results(params, assignment_id):
+def log_rule_results(params, rule):
     if params.result.display_logs == False:
         return
     print("-------------------- RULE RESULTS ---------------------")
     print(f"Table Name     : {params.meta.table}")
-    print(f"Rule Name      : {params.config.rule_name}")
-    print(f"Rows Evaluated : {params.result.rows_evaluated}")
-    print(f"Rows Passed    : {params.result.rows_pass}")
-    print(f"Rows Failed    : {params.result.rows_failed}")
+    print(f"Rule Name      : {rule.rule_name}")
+    print(f"Status         : {rule.status}")
+    print(f"Rows Evaluated : {rule.rows_evaluated}")
+    print(f"Rows Passed    : {rule.rows_pass}")
+    print(f"Rows Failed    : {rule.rows_failed}")
     print("======================================================\n")
 
 
@@ -110,3 +116,4 @@ def log_table_results(params):
     print(f"Rules Warning   : {params.result.rules_warning}")
     print(f"Rules Error     : {params.result.rules_error}")
     print("==========================================================\n")
+    
