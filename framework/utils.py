@@ -423,8 +423,9 @@ def load_params_table_rules(params, table_rows, df_input):
         build_rule_plan(params, row, df_input)
 
 
-def load_params_user_input(params, apply_at, filter_values, project_name, full_table_name, run_mode, display_logs):
+def load_params_user_input(params, apply_at, filter_values, project_name, full_table_name, run_mode, display_logs, full_scan=False):
 
+    params.config.full_scan = bool(full_scan)
     params.config.apply_at = apply_at
     params.meta.full_table_name = full_table_name
     params.config.run_mode = run_mode
@@ -446,6 +447,9 @@ def filter_by_filter_field(params, df_input):
     values_dict = params.config.filter_values or {}
 
     values = values_dict.get(field_type)
+
+    if params.config.full_scan:
+        return df
 
     if values is None:
         max_value = df.select(F.max(F.col(field))).first()[0]
