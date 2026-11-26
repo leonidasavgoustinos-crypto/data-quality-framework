@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 dbutils.widgets.text("target_environment", "")
 dbutils.widgets.text("catalog", "")
 dbutils.widgets.text("schema", "")

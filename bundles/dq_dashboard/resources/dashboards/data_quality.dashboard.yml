@@ -1,0 +1,14 @@
+resources:
+  dashboards:
+    data_quality:
+      display_name: ${var.dashboard_display_name}
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}
+      file_path: ../../src/dashboards/data_quality.lvdash.json
+      embed_credentials: false
+      permissions:
+        - group_name: ${var.owner_group}
+          level: CAN_MANAGE
+        - group_name: ${var.viewer_group}
+          level: CAN_RUN

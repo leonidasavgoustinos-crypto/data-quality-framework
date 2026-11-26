@@ -1,0 +1,25 @@
+# =============================================================================
+# DEV - development workspace. Each developer deploys an own, prefixed copy
+# ("[dev <user>] ...") under their home folder; schedules are paused.
+# =============================================================================
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://adb-1451829595406012.12.azuredatabricks.net
+    presets:
+      tags:
+        env: dev
+    variables:
+      catalog: analytics_dq_dev
+      schema: reporting
+      warehouse_id:
+        lookup:
+          warehouse: brickbybrickWH
+      # In dev the base views are maintained by hand by their owner
+      # (eva.routsi@ms.d-one.ai). dq_setup must never replace them here.
+      deploy_base_views: "false"
+      create_base_tables: "true"
+      notification_email: apostolos.rigas@ms.d-one.ai
+      schedule_status: PAUSED

@@ -1,0 +1,83 @@
+# =============================================================================
+# CI pipeline for the dq_dashboard bundle.
+# Trigger: push to feature/* -> test; push to main -> test + prod.
+#
+# Required pipeline variables (set in Azure DevOps, not in YAML):
+#   DATABRICKS_TOKEN_TEST  - PAT or SP OAuth token for the test workspace
+#   DATABRICKS_TOKEN_PROD  - PAT or SP OAuth token for the prod workspace
+#   DATABRICKS_HOST_TEST   - e.g. https://adb-xxx.azuredatabricks.net
+#   DATABRICKS_HOST_PROD   - e.g. https://adb-yyy.azuredatabricks.net
+#   DQ_NOTIFICATION_EMAIL  - team address for alerts
+# =============================================================================
+trigger:
+  branches:
+    include:
+      - main
+      - feature/*
+
+variables:
+  BUNDLE_ROOT: bundles/dq_dashboard
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  # ------------------------------------------------------------------ #
+  # Stage 1: validate (all branches)                                     #
+  # ------------------------------------------------------------------ #
+  - stage: validate
+    displayName: Validate bundle
+    jobs:
+      - job: validate
+        steps:
+          - script: pip install databricks-cli
+            displayName: Install Databricks CLI
+          - script: |
+              cd $(BUNDLE_ROOT)
+              DATABRICKS_HOST=$(DATABRICKS_HOST_TEST) \
+              DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_TEST) \
+              databricks bundle validate --target test
+            displayName: Validate target=test
+
+  # ------------------------------------------------------------------ #
+  # Stage 2: deploy to test (all branches)                               #
+  # ------------------------------------------------------------------ #
+  - stage: deploy_test
+    displayName: Deploy to test
+    dependsOn: validate
+    jobs:
+      - job: deploy_test
+        steps:
+          - script: pip install databricks-cli
+            displayName: Install Databricks CLI
+          - script: |
+              cd $(BUNDLE_ROOT)
+              DATABRICKS_HOST=$(DATABRICKS_HOST_TEST) \
+              DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_TEST) \
+              BUNDLE_VAR_notification_email=$(DQ_NOTIFICATION_EMAIL) \
+              bash scripts/deploy.sh test
+            displayName: Deploy and run dq_setup on test
+
+  # ------------------------------------------------------------------ #
+  # Stage 3: deploy to prod (main branch only)                           #
+  # ------------------------------------------------------------------ #
+  - stage: deploy_prod
+    displayName: Deploy to prod
+    dependsOn: deploy_test
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: deploy_prod
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: pip install databricks-cli
+                  displayName: Install Databricks CLI
+                - script: |
+                    cd $(BUNDLE_ROOT)
+                    DATABRICKS_HOST=$(DATABRICKS_HOST_PROD) \
+                    DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_PROD) \
+                    BUNDLE_VAR_notification_email=$(DQ_NOTIFICATION_EMAIL) \
+                    bash scripts/deploy.sh prod
+                  displayName: Deploy and run dq_setup on prod

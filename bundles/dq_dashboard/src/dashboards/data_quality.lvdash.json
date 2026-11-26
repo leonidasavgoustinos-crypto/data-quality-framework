@@ -1,0 +1,4264 @@
+{
+  "datasets": [
+    {
+      "name": "ds_s2_daily",
+      "displayName": "ds_s2_daily",
+      "queryLines": [
+        "-- ds_s2_daily: per run day in the 30 days up to E and non-pass status, the number of rule results; days without runs have no rows (gaps).\n",
+        "WITH days AS (\n",
+        "  SELECT\n",
+        "    e.e_date,\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date)\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "        AND run_date < e.e_date\n",
+        "    ) AS p_date\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date) AS e_date\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "    ) e\n",
+        "),\n",
+        "res AS (\n",
+        "  SELECT\n",
+        "    r.*\n",
+        "  FROM\n",
+        "    v_simple_results r CROSS JOIN days d\n",
+        "  WHERE\n",
+        "    r.is_latest_for_day\n",
+        "    AND r.status_label IS NOT NULL\n",
+        "    AND r.run_date BETWEEN date_sub(d.e_date, 29) AND d.e_date\n",
+        "),\n",
+        "run_days AS (\n",
+        "  SELECT DISTINCT\n",
+        "    run_date\n",
+        "  FROM\n",
+        "    res\n",
+        ")\n",
+        "SELECT\n",
+        "  CAST(DATE_TRUNC('DAY', d.run_date) AS DATE) AS run_day,\n",
+        "  s.status_label,\n",
+        "  s.status_order,\n",
+        "  COUNT(r.status) AS result_count\n",
+        "FROM\n",
+        "  run_days d\n",
+        "    CROSS JOIN v_simple_status s\n",
+        "    LEFT JOIN res r\n",
+        "      ON r.run_date = d.run_date\n",
+        "      AND r.status = s.status\n",
+        "WHERE\n",
+        "  s.status <> 'pass'\n",
+        "GROUP BY\n",
+        "  ALL\n",
+        "ORDER BY\n",
+        "  run_day,\n",
+        "  s.status_order"
+      ]
+    },
+    {
+      "name": "ds_s1_areas",
+      "displayName": "ds_s1_areas",
+      "queryLines": [
+        "-- ds_s1_areas: per project on E, rule results by non-pass status (bar segments) plus pass_count for the tooltip; worst project first.\n",
+        "WITH days AS (\n",
+        "  SELECT\n",
+        "    e.e_date,\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date)\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "        AND run_date < e.e_date\n",
+        "    ) AS p_date\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date) AS e_date\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "    ) e\n",
+        "),\n",
+        "res AS (\n",
+        "  SELECT\n",
+        "    r.*\n",
+        "  FROM\n",
+        "    v_simple_results r\n",
+        "      JOIN days d\n",
+        "        ON r.run_date = d.e_date\n",
+        "  WHERE\n",
+        "    r.is_latest_for_day\n",
+        "),\n",
+        "areas AS (\n",
+        "  SELECT\n",
+        "    project_label,\n",
+        "    COUNT_IF(status = 'error') AS area_errors,\n",
+        "    COUNT_IF(status = 'warning') AS area_warnings,\n",
+        "    COUNT_IF(status = 'code_error') AS area_code_errors,\n",
+        "    COUNT_IF(status = 'pass') AS pass_count\n",
+        "  FROM\n",
+        "    res\n",
+        "  GROUP BY\n",
+        "    project_label\n",
+        ")\n",
+        "SELECT\n",
+        "  a.project_label,\n",
+        "  s.status_label,\n",
+        "  s.status_order,\n",
+        "  COUNT(r.status) AS result_count,\n",
+        "  a.pass_count,\n",
+        "  a.area_errors,\n",
+        "  a.area_warnings,\n",
+        "  a.area_code_errors\n",
+        "FROM\n",
+        "  areas a\n",
+        "    CROSS JOIN v_simple_status s\n",
+        "    LEFT JOIN res r\n",
+        "      ON r.project_label = a.project_label\n",
+        "      AND r.status = s.status\n",
+        "WHERE\n",
+        "  s.status <> 'pass'\n",
+        "GROUP BY\n",
+        "  ALL\n",
+        "ORDER BY\n",
+        "  a.area_errors DESC,\n",
+        "  a.area_warnings DESC,\n",
+        "  a.area_code_errors DESC,\n",
+        "  a.project_label,\n",
+        "  s.status_order"
+      ]
+    },
+    {
+      "name": "ds_s2_kpis",
+      "displayName": "ds_s2_kpis",
+      "queryLines": [
+        "-- ds_s2_kpis: all-time numbers for page 2: executions ever, and Pass / Warning / Failure over all scored rule results (latest per rule and day).\n",
+        "WITH res AS (\n",
+        "  SELECT\n",
+        "    *\n",
+        "  FROM\n",
+        "    v_simple_results\n",
+        "  WHERE\n",
+        "    is_latest_for_day\n",
+        "    AND is_scored\n",
+        "),\n",
+        "months AS (\n",
+        "  SELECT\n",
+        "    array(\n",
+        "      'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'\n",
+        "    ) AS m\n",
+        ")\n",
+        "SELECT\n",
+        "  (\n",
+        "    SELECT\n",
+        "      COUNT(*)\n",
+        "    FROM\n",
+        "      v_simple_executions\n",
+        "  ) AS executions,\n",
+        "  COUNT_IF(status = 'pass') AS pass_all,\n",
+        "  COUNT_IF(status = 'warning') AS warning_all,\n",
+        "  COUNT_IF(status = 'error') AS error_all,\n",
+        "  COUNT(*) AS scored_all,\n",
+        "  COUNT_IF(status = 'pass') / NULLIF(COUNT(*), 0) AS pass_pct_all,\n",
+        "  COUNT_IF(status = 'warning') / NULLIF(COUNT(*), 0) AS warning_pct_all,\n",
+        "  COUNT_IF(status = 'error') / NULLIF(COUNT(*), 0) AS error_pct_all,\n",
+        "  concat(\n",
+        "    element_at(MAX(mo.m), month(MIN(run_date))),\n",
+        "    ' ',\n",
+        "    year(MIN(run_date))\n",
+        "  ) AS first_run_month_label,\n",
+        "  -- pre-formatted subtitle lines 'X of N' (English number format)\n",
+        "  concat(format_number(COUNT_IF(status = 'pass'), 0), ' of ', format_number(COUNT(*), 0)) AS pass_sub_all,\n",
+        "  concat(format_number(COUNT_IF(status = 'warning'), 0), ' of ', format_number(COUNT(*), 0)) AS warning_sub_all,\n",
+        "  concat(format_number(COUNT_IF(status = 'error'), 0), ' of ', format_number(COUNT(*), 0)) AS error_sub_all\n",
+        "FROM\n",
+        "  res CROSS JOIN months mo"
+      ]
+    },
+    {
+      "name": "ds_s2_monthly",
+      "displayName": "ds_s2_monthly",
+      "queryLines": [
+        "-- ds_s2_monthly: per month, share of scored rule results that were Αποτυχία and Προειδοποίηση; is_last_month marks the (possibly incomplete) last month.\n",
+        "WITH res AS (\n",
+        "  SELECT\n",
+        "    *\n",
+        "  FROM\n",
+        "    v_simple_results\n",
+        "  WHERE\n",
+        "    is_latest_for_day\n",
+        "    AND is_scored\n",
+        "),\n",
+        "m AS (\n",
+        "  SELECT\n",
+        "    CAST(DATE_TRUNC('MONTH', run_date) AS DATE) AS run_month,\n",
+        "    status\n",
+        "  FROM\n",
+        "    res\n",
+        ")\n",
+        "SELECT\n",
+        "  m.run_month,\n",
+        "  s.status_label AS series_label,\n",
+        "  s.status_color,\n",
+        "  COUNT_IF(m.status = s.status) / COUNT(*) AS share,\n",
+        "  m.run_month = MAX(m.run_month) OVER () AS is_last_month\n",
+        "FROM\n",
+        "  m CROSS JOIN v_simple_status s\n",
+        "WHERE\n",
+        "  s.status IN ('error', 'warning')\n",
+        "GROUP BY\n",
+        "  m.run_month,\n",
+        "  s.status_label,\n",
+        "  s.status_color,\n",
+        "  s.status_order\n",
+        "ORDER BY\n",
+        "  m.run_month,\n",
+        "  s.status_order"
+      ]
+    },
+    {
+      "name": "ds_s2_areas",
+      "displayName": "ds_s2_areas",
+      "queryLines": [
+        "-- ds_s2_areas: per project, its last run day, the worst status of that day, and Pass / Warning / Failure in the 7 days up to E; most errors first (projects).\n",
+        "WITH days AS (\n",
+        "  SELECT\n",
+        "    e.e_date,\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date)\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "        AND run_date < e.e_date\n",
+        "    ) AS p_date\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date) AS e_date\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "    ) e\n",
+        "),\n",
+        "res AS (\n",
+        "  SELECT\n",
+        "    *\n",
+        "  FROM\n",
+        "    v_simple_results\n",
+        "  WHERE\n",
+        "    is_latest_for_day\n",
+        "    AND status_label IS NOT NULL\n",
+        "),\n",
+        "last_day AS (\n",
+        "  SELECT\n",
+        "    project_label,\n",
+        "    MAX(run_date) AS last_day\n",
+        "  FROM\n",
+        "    res\n",
+        "  GROUP BY\n",
+        "    project_label\n",
+        "),\n",
+        "last_status AS (\n",
+        "  SELECT\n",
+        "    l.project_label,\n",
+        "    l.last_day,\n",
+        "    MIN(r.status_order) AS worst_order\n",
+        "  FROM\n",
+        "    last_day l\n",
+        "      JOIN res r\n",
+        "        ON r.project_label = l.project_label\n",
+        "        AND r.run_date = l.last_day\n",
+        "  GROUP BY\n",
+        "    l.project_label,\n",
+        "    l.last_day\n",
+        "),\n",
+        "week AS (\n",
+        "  SELECT\n",
+        "    r.project_label,\n",
+        "    COUNT_IF(r.status = 'pass') AS pass_7d,\n",
+        "    COUNT_IF(r.status = 'warning') AS warning_7d,\n",
+        "    COUNT_IF(r.status = 'error') AS error_7d\n",
+        "  FROM\n",
+        "    res r CROSS JOIN days d\n",
+        "  WHERE\n",
+        "    r.run_date BETWEEN date_sub(d.e_date, 6) AND d.e_date\n",
+        "  GROUP BY\n",
+        "    r.project_label\n",
+        ")\n",
+        "SELECT\n",
+        "  ls.project_label,\n",
+        "  ls.last_day,\n",
+        "  date_format(ls.last_day, 'dd/MM/yyyy') AS last_day_label,\n",
+        "  concat(s.status_symbol, ' ', s.status_label) AS last_status_text,\n",
+        "  s.status_label AS last_status_label,\n",
+        "  COALESCE(w.pass_7d, 0) AS pass_7d,\n",
+        "  COALESCE(w.warning_7d, 0) AS warning_7d,\n",
+        "  COALESCE(w.error_7d, 0) AS error_7d,\n",
+        "  'Open →' AS open_text,\n",
+        "  url_encode(ls.project_label) AS project_url\n",
+        "FROM\n",
+        "  last_status ls\n",
+        "    JOIN v_simple_status s\n",
+        "      ON s.status_order = ls.worst_order\n",
+        "    LEFT JOIN week w\n",
+        "      ON w.project_label = ls.project_label\n",
+        "ORDER BY\n",
+        "  error_7d DESC,\n",
+        "  warning_7d DESC,\n",
+        "  ls.project_label"
+      ]
+    },
+    {
+      "name": "ds_s1_tables",
+      "displayName": "ds_s1_tables",
+      "queryLines": [
+        "-- ds_s1_tables: top 5 tables by failed rows on E (only > 0), with the table's worst status on E for the bar color.\n",
+        "WITH days AS (\n",
+        "  SELECT\n",
+        "    e.e_date,\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date)\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "        AND run_date < e.e_date\n",
+        "    ) AS p_date\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date) AS e_date\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "    ) e\n",
+        ")\n",
+        "SELECT\n",
+        "  t.table_label,\n",
+        "  t.project_label,\n",
+        "  t.status_label,\n",
+        "  t.status_order,\n",
+        "  COALESCE(t.rows_failed, 0) AS rows_failed\n",
+        "FROM\n",
+        "  v_simple_table_daily t\n",
+        "    JOIN days d\n",
+        "      ON t.run_date = d.e_date\n",
+        "WHERE\n",
+        "  COALESCE(t.rows_failed, 0) > 0\n",
+        "ORDER BY\n",
+        "  rows_failed DESC,\n",
+        "  t.status_order,\n",
+        "  t.table_label\n",
+        "LIMIT 5"
+      ]
+    },
+    {
+      "name": "ds_s1_kpis",
+      "displayName": "ds_s1_kpis",
+      "queryLines": [
+        "-- ds_s1_kpis: one row with E, P and every page-1 tile value (E vs P); times in Athens time; N = rows of the data (per table MAX).\n",
+        "WITH days AS (\n",
+        "  SELECT\n",
+        "    e.e_date,\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date)\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "        AND run_date < e.e_date\n",
+        "    ) AS p_date\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date) AS e_date\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "    ) e\n",
+        "),\n",
+        "res AS (\n",
+        "  SELECT\n",
+        "    r.*,\n",
+        "    CASE\n",
+        "      WHEN r.run_date = d.e_date THEN 'E'\n",
+        "      ELSE 'P'\n",
+        "    END AS which\n",
+        "  FROM\n",
+        "    v_simple_results r CROSS JOIN days d\n",
+        "  WHERE\n",
+        "    r.is_latest_for_day\n",
+        "    AND r.run_date IN (d.e_date, d.p_date)\n",
+        "),\n",
+        "counts AS (\n",
+        "  SELECT\n",
+        "    COUNT_IF(\n",
+        "      which = 'E'\n",
+        "      AND status = 'pass'\n",
+        "    ) AS pass_e,\n",
+        "    COUNT_IF(\n",
+        "      which = 'P'\n",
+        "      AND status = 'pass'\n",
+        "    ) AS pass_p,\n",
+        "    COUNT_IF(\n",
+        "      which = 'E'\n",
+        "      AND status = 'warning'\n",
+        "    ) AS warning_e,\n",
+        "    COUNT_IF(\n",
+        "      which = 'P'\n",
+        "      AND status = 'warning'\n",
+        "    ) AS warning_p,\n",
+        "    COUNT_IF(\n",
+        "      which = 'E'\n",
+        "      AND status = 'error'\n",
+        "    ) AS error_e,\n",
+        "    COUNT_IF(\n",
+        "      which = 'P'\n",
+        "      AND status = 'error'\n",
+        "    ) AS error_p,\n",
+        "    COUNT_IF(\n",
+        "      which = 'E'\n",
+        "      AND status = 'code_error'\n",
+        "    ) AS code_error_e,\n",
+        "    COUNT_IF(\n",
+        "      which = 'P'\n",
+        "      AND status = 'code_error'\n",
+        "    ) AS code_error_p,\n",
+        "    COUNT_IF(\n",
+        "      which = 'E'\n",
+        "      AND is_scored\n",
+        "    ) AS scored_e,\n",
+        "    COUNT_IF(\n",
+        "      which = 'E'\n",
+        "      AND status_label IS NOT NULL\n",
+        "    ) AS results_e,\n",
+        "    SUM(\n",
+        "      CASE\n",
+        "        WHEN\n",
+        "          which = 'E'\n",
+        "          AND quarantine\n",
+        "          AND status IN ('warning', 'error')\n",
+        "        THEN\n",
+        "          COALESCE(rows_failed, 0)\n",
+        "        ELSE 0\n",
+        "      END\n",
+        "    ) AS quarantined_e,\n",
+        "    SUM(\n",
+        "      CASE\n",
+        "        WHEN\n",
+        "          which = 'P'\n",
+        "          AND quarantine\n",
+        "          AND status IN ('warning', 'error')\n",
+        "        THEN\n",
+        "          COALESCE(rows_failed, 0)\n",
+        "        ELSE 0\n",
+        "      END\n",
+        "    ) AS quarantined_p\n",
+        "  FROM\n",
+        "    res\n",
+        "),\n",
+        "data_rows AS (\n",
+        "  SELECT\n",
+        "    SUM(t.rows_evaluated) AS rows_evaluated_e\n",
+        "  FROM\n",
+        "    v_simple_table_daily t\n",
+        "      JOIN days d\n",
+        "        ON t.run_date = d.e_date\n",
+        "),\n",
+        "runs AS (\n",
+        "  SELECT\n",
+        "    from_utc_timestamp(MAX(x.end_timestamp), 'Europe/Athens') AS e_end_ts\n",
+        "  FROM\n",
+        "    v_simple_executions x\n",
+        "      JOIN days d\n",
+        "        ON x.run_date = d.e_date\n",
+        ")\n",
+        "SELECT\n",
+        "  d.e_date,\n",
+        "  d.p_date,\n",
+        "  date_format(d.e_date, 'dd/MM/yyyy') AS e_date_label,\n",
+        "  date_format(ru.e_end_ts, 'dd/MM/yyyy HH:mm') AS e_end_label,\n",
+        "  qe.score AS score_e,\n",
+        "  qp.score AS score_p,\n",
+        "  (qe.score - qp.score) * 100 AS score_change_points,\n",
+        "  COALESCE(qe.tables_scored, 0) AS tables_scored,\n",
+        "  COALESCE(qe.stale_tables, 0) AS stale_tables,\n",
+        "  c.pass_e,\n",
+        "  CASE\n",
+        "    WHEN d.p_date IS NOT NULL THEN c.pass_p\n",
+        "  END AS pass_p,\n",
+        "  c.warning_e,\n",
+        "  CASE\n",
+        "    WHEN d.p_date IS NOT NULL THEN c.warning_p\n",
+        "  END AS warning_p,\n",
+        "  c.error_e,\n",
+        "  CASE\n",
+        "    WHEN d.p_date IS NOT NULL THEN c.error_p\n",
+        "  END AS error_p,\n",
+        "  c.code_error_e,\n",
+        "  CASE\n",
+        "    WHEN d.p_date IS NOT NULL THEN c.code_error_p\n",
+        "  END AS code_error_p,\n",
+        "  c.scored_e,\n",
+        "  c.results_e,\n",
+        "  c.pass_e / NULLIF(c.scored_e, 0) AS pass_pct_e,\n",
+        "  c.warning_e / NULLIF(c.scored_e, 0) AS warning_pct_e,\n",
+        "  c.error_e / NULLIF(c.scored_e, 0) AS error_pct_e,\n",
+        "  c.code_error_e / NULLIF(c.results_e, 0) AS code_error_pct_e,\n",
+        "  COALESCE(c.quarantined_e, 0) AS quarantined_e,\n",
+        "  CASE\n",
+        "    WHEN d.p_date IS NOT NULL THEN COALESCE(c.quarantined_p, 0)\n",
+        "  END AS quarantined_p,\n",
+        "  COALESCE(dr.rows_evaluated_e, 0) AS rows_evaluated_e,\n",
+        "  c.quarantined_e / NULLIF(dr.rows_evaluated_e, 0) AS quarantined_pct_e,\n",
+        "  -- pre-formatted subtitle lines (English number format) for the counter templates\n",
+        "  concat(COALESCE(qe.tables_scored, 0), ' tables · ', COALESCE(qe.stale_tables, 0), ' left out (late)') AS score_sub,\n",
+        "  concat(COALESCE(format_number(c.pass_e * 100.0 / NULLIF(c.scored_e, 0), 1), '0.0'), '% of ', format_number(c.scored_e, 0), ' checks') AS pass_sub,\n",
+        "  concat(COALESCE(format_number(c.warning_e * 100.0 / NULLIF(c.scored_e, 0), 1), '0.0'), '% of ', format_number(c.scored_e, 0), ' checks') AS warning_sub,\n",
+        "  concat(COALESCE(format_number(c.error_e * 100.0 / NULLIF(c.scored_e, 0), 1), '0.0'), '% of ', format_number(c.scored_e, 0), ' checks') AS error_sub,\n",
+        "  concat(COALESCE(format_number(c.code_error_e * 100.0 / NULLIF(c.results_e, 0), 1), '0.0'), '% of ', format_number(c.results_e, 0), ' checks') AS code_error_sub,\n",
+        "  concat(COALESCE(format_number(COALESCE(c.quarantined_e, 0) * 100.0 / NULLIF(dr.rows_evaluated_e, 0), 2), '0.00'), '% of ', format_number(COALESCE(dr.rows_evaluated_e, 0), 0), ' rows') AS quarantine_sub,\n",
+        "  -- tile texts (style pass): value text, delta text, delta colour\n",
+        "  COALESCE(concat(format_number(qe.score * 100, 1), '%'), '—') AS score_txt,\n",
+        "  CASE WHEN qe.score IS NULL THEN '' WHEN qp.score IS NULL THEN 'no previous day' WHEN qe.score > qp.score THEN concat('▲ ', format_number((qe.score - qp.score) * 100, 1), ' pts from the previous day') WHEN qe.score < qp.score THEN concat('▼ ', format_number((qp.score - qe.score) * 100, 1), ' pts from the previous day') ELSE '= no change' END AS score_delta,\n",
+        "  CASE WHEN qp.score IS NULL OR qe.score = qp.score THEN '#8A8F98' WHEN qe.score > qp.score THEN '#2E8B57' ELSE '#D64545' END AS score_dcol,\n",
+        "  format_number(c.pass_e, 0) AS pass_txt,\n",
+        "  CASE WHEN d.p_date IS NULL THEN 'no previous day' WHEN c.pass_e > c.pass_p THEN concat('▲ ', format_number(c.pass_e - c.pass_p, 0), ' from the previous day') WHEN c.pass_e < c.pass_p THEN concat('▼ ', format_number(c.pass_p - c.pass_e, 0), ' from the previous day') ELSE '= no change' END AS pass_delta,\n",
+        "  CASE WHEN d.p_date IS NULL OR c.pass_e = c.pass_p THEN '#8A8F98' WHEN c.pass_e > c.pass_p THEN '#2E8B57' ELSE '#D64545' END AS pass_dcol,\n",
+        "  format_number(c.warning_e, 0) AS warning_txt,\n",
+        "  CASE WHEN d.p_date IS NULL THEN 'no previous day' WHEN c.warning_e > c.warning_p THEN concat('▲ ', format_number(c.warning_e - c.warning_p, 0), ' from the previous day') WHEN c.warning_e < c.warning_p THEN concat('▼ ', format_number(c.warning_p - c.warning_e, 0), ' from the previous day') ELSE '= no change' END AS warning_delta,\n",
+        "  CASE WHEN d.p_date IS NULL OR c.warning_e = c.warning_p THEN '#8A8F98' WHEN c.warning_e > c.warning_p THEN '#D64545' ELSE '#2E8B57' END AS warning_dcol,\n",
+        "  format_number(c.error_e, 0) AS error_txt,\n",
+        "  CASE WHEN d.p_date IS NULL THEN 'no previous day' WHEN c.error_e > c.error_p THEN concat('▲ ', format_number(c.error_e - c.error_p, 0), ' from the previous day') WHEN c.error_e < c.error_p THEN concat('▼ ', format_number(c.error_p - c.error_e, 0), ' from the previous day') ELSE '= no change' END AS error_delta,\n",
+        "  CASE WHEN d.p_date IS NULL OR c.error_e = c.error_p THEN '#8A8F98' WHEN c.error_e > c.error_p THEN '#D64545' ELSE '#2E8B57' END AS error_dcol,\n",
+        "  format_number(c.code_error_e, 0) AS code_error_txt,\n",
+        "  CASE WHEN d.p_date IS NULL THEN 'no previous day' WHEN c.code_error_e > c.code_error_p THEN concat('▲ ', format_number(c.code_error_e - c.code_error_p, 0), ' from the previous day') WHEN c.code_error_e < c.code_error_p THEN concat('▼ ', format_number(c.code_error_p - c.code_error_e, 0), ' from the previous day') ELSE '= no change' END AS code_error_delta,\n",
+        "  CASE WHEN d.p_date IS NULL OR c.code_error_e = c.code_error_p THEN '#8A8F98' WHEN c.code_error_e > c.code_error_p THEN '#D64545' ELSE '#2E8B57' END AS code_error_dcol,\n",
+        "  format_number(COALESCE(c.quarantined_e, 0), 0) AS quarantined_txt,\n",
+        "  CASE WHEN d.p_date IS NULL THEN 'no previous day' WHEN COALESCE(c.quarantined_e, 0) > COALESCE(c.quarantined_p, 0) THEN concat('▲ ', format_number(COALESCE(c.quarantined_e, 0) - COALESCE(c.quarantined_p, 0), 0), ' from the previous day') WHEN COALESCE(c.quarantined_e, 0) < COALESCE(c.quarantined_p, 0) THEN concat('▼ ', format_number(COALESCE(c.quarantined_p, 0) - COALESCE(c.quarantined_e, 0), 0), ' from the previous day') ELSE '= no change' END AS quarantined_delta,\n",
+        "  CASE WHEN d.p_date IS NULL OR COALESCE(c.quarantined_e, 0) = COALESCE(c.quarantined_p, 0) THEN '#8A8F98' WHEN COALESCE(c.quarantined_e, 0) > COALESCE(c.quarantined_p, 0) THEN '#D64545' ELSE '#2E8B57' END AS quarantined_dcol\n",
+        "FROM\n",
+        "  days d\n",
+        "    CROSS JOIN counts c\n",
+        "    CROSS JOIN data_rows dr\n",
+        "    CROSS JOIN runs ru\n",
+        "    LEFT JOIN v_simple_quality_score qe\n",
+        "      ON qe.k = 1\n",
+        "    LEFT JOIN v_simple_quality_score qp\n",
+        "      ON qp.k = 2"
+      ]
+    },
+    {
+      "name": "ds_s1_dimensions",
+      "displayName": "ds_s1_dimensions",
+      "queryLines": [
+        "-- ds_s1_dimensions: per kind of check on E, rule results by status and % passed; lowest % first, 'Unknown type' last.\n",
+        "WITH days AS (\n",
+        "  SELECT\n",
+        "    e.e_date,\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date)\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "        AND run_date < e.e_date\n",
+        "    ) AS p_date\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT\n",
+        "        MAX(run_date) AS e_date\n",
+        "      FROM\n",
+        "        v_simple_results\n",
+        "      WHERE\n",
+        "        result_rule_id IS NOT NULL\n",
+        "    ) e\n",
+        "),\n",
+        "res AS (\n",
+        "  SELECT\n",
+        "    COALESCE(r.dimension_label, 'Unknown type') AS dimension_label,\n",
+        "    r.dimension_label IS NULL AS is_unknown,\n",
+        "    r.status,\n",
+        "    r.is_scored\n",
+        "  FROM\n",
+        "    v_simple_results r\n",
+        "      JOIN days d\n",
+        "        ON r.run_date = d.e_date\n",
+        "  WHERE\n",
+        "    r.is_latest_for_day\n",
+        "    AND r.status_label IS NOT NULL\n",
+        ")\n",
+        "SELECT\n",
+        "  dimension_label,\n",
+        "  COUNT_IF(status = 'pass') AS pass_count,\n",
+        "  COUNT_IF(status = 'warning') AS warning_count,\n",
+        "  COUNT_IF(status = 'error') AS error_count,\n",
+        "  COUNT_IF(status = 'code_error') AS code_error_count,\n",
+        "  COUNT_IF(status = 'pass') / NULLIF(COUNT_IF(is_scored), 0) AS pass_pct,\n",
+        "  MAX(is_unknown) AS is_unknown\n",
+        "FROM\n",
+        "  res\n",
+        "GROUP BY\n",
+        "  dimension_label\n",
+        "ORDER BY\n",
+        "  is_unknown,\n",
+        "  pass_pct ASC NULLS LAST,\n",
+        "  dimension_label"
+      ]
+    },
+    {
+      "name": "ds_s3_daily",
+      "displayName": "ds_s3_daily",
+      "queryLines": [
+        "-- ds_s3_daily: per project and run day in the 30 days up to E, rule results by status (incl. Pass) with count and share of that day's results (same chart as 2.5, per project).\n",
+        "WITH e AS (\n",
+        "  SELECT\n",
+        "    MAX(run_date) AS e_date\n",
+        "  FROM\n",
+        "    v_simple_results\n",
+        "  WHERE\n",
+        "    result_rule_id IS NOT NULL\n",
+        "),\n",
+        "res AS (\n",
+        "  SELECT\n",
+        "    r.project_label,\n",
+        "    r.run_date,\n",
+        "    r.status\n",
+        "  FROM\n",
+        "    v_simple_results r CROSS JOIN e\n",
+        "  WHERE\n",
+        "    r.is_latest_for_day\n",
+        "    AND r.status_label IS NOT NULL\n",
+        "    AND r.run_date BETWEEN date_sub(e.e_date, 29) AND e.e_date\n",
+        "    AND r.project_label = :area\n",
+        "),\n",
+        "project_days AS (\n",
+        "  SELECT DISTINCT\n",
+        "    project_label,\n",
+        "    run_date\n",
+        "  FROM\n",
+        "    res\n",
+        "),\n",
+        "counts AS (\n",
+        "  SELECT\n",
+        "    d.project_label,\n",
+        "    CAST(d.run_date AS DATE) AS run_day,\n",
+        "    s.status_label,\n",
+        "    s.status_order,\n",
+        "    COUNT(r.status) AS result_count\n",
+        "  FROM\n",
+        "    project_days d\n",
+        "      CROSS JOIN v_simple_status s\n",
+        "      LEFT JOIN res r\n",
+        "        ON r.project_label = d.project_label\n",
+        "        AND r.run_date = d.run_date\n",
+        "        AND r.status = s.status\n",
+        "  GROUP BY\n",
+        "    ALL\n",
+        ")\n",
+        "SELECT\n",
+        "  project_label,\n",
+        "  run_day,\n",
+        "  status_label,\n",
+        "  status_order,\n",
+        "  result_count,\n",
+        "  result_count\n",
+        "    / NULLIF(SUM(result_count) OVER (PARTITION BY project_label, run_day), 0) AS result_pct\n",
+        "FROM\n",
+        "  counts\n",
+        "ORDER BY\n",
+        "  project_label,\n",
+        "  run_day,\n",
+        "  status_order"
+      ],
+      "parameters": [
+        {
+          "displayName": "Project",
+          "keyword": "area",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "demo_project"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_s3_tables",
+      "displayName": "ds_s3_tables",
+      "queryLines": [
+        "-- ds_s3_tables: one row per table on its newest run day: worst status, consecutive run days WITHOUT Pass (window over v_simple_table_daily_ext), failed rows; feeds 3.1-3.3 and 3.5 (Project page).\n",
+        "-- Unknown table detected by key (table_id IS NULL), not by label. view_streak_runs = Eva's same-state streak, kept for comparison only.\n",
+        "WITH d AS (\n",
+        "  SELECT\n",
+        "    t.*,\n",
+        "    SUM(\n",
+        "      CASE\n",
+        "        WHEN t.worst_status = 'pass' THEN 1\n",
+        "        ELSE 0\n",
+        "      END\n",
+        "    ) OVER (\n",
+        "        PARTITION BY t.table_label\n",
+        "        ORDER BY t.run_date DESC\n",
+        "        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n",
+        "      ) AS pass_seen\n",
+        "  FROM\n",
+        "    v_simple_table_daily_ext t\n",
+        "),\n",
+        "streak AS (\n",
+        "  SELECT\n",
+        "    table_label,\n",
+        "    COUNT_IF(pass_seen = 0) AS np_runs,\n",
+        "    MIN(\n",
+        "      CASE\n",
+        "        WHEN pass_seen = 0 THEN run_date\n",
+        "      END\n",
+        "    ) AS np_start\n",
+        "  FROM\n",
+        "    d\n",
+        "  GROUP BY\n",
+        "    table_label\n",
+        ")\n",
+        "SELECT\n",
+        "  t.project_label,\n",
+        "  t.table_label,\n",
+        "  t.table_id IS NULL AS is_unknown,\n",
+        "  t.run_date AS last_day,\n",
+        "  t.worst_status,\n",
+        "  t.status_label,\n",
+        "  t.status_order,\n",
+        "  concat(t.status_symbol, ' ', t.status_label) AS last_status_text,\n",
+        "  COALESCE(s.np_runs, 0) AS streak_runs,\n",
+        "  CASE\n",
+        "    WHEN COALESCE(s.np_runs, 0) = 0 THEN '—'\n",
+        "    ELSE CAST(s.np_runs AS STRING)\n",
+        "  END AS streak_text,\n",
+        "  CASE\n",
+        "    WHEN\n",
+        "      COALESCE(s.np_runs, 0) = 0\n",
+        "      OR s.np_start IS NULL\n",
+        "    THEN\n",
+        "      '—'\n",
+        "    ELSE date_format(s.np_start, 'dd/MM')\n",
+        "  END AS streak_from,\n",
+        "  COALESCE(t.rows_failed, 0) AS rows_failed,\n",
+        "  CASE\n",
+        "    WHEN COALESCE(t.rows_failed, 0) = 0 THEN '—'\n",
+        "    ELSE format_number(t.rows_failed, 0)\n",
+        "  END AS rows_failed_text,\n",
+        "  CASE\n",
+        "    WHEN t.worst_status = 'error' THEN 1\n",
+        "    ELSE 0\n",
+        "  END AS is_error,\n",
+        "  CASE\n",
+        "    WHEN t.worst_status = 'warning' THEN 1\n",
+        "    ELSE 0\n",
+        "  END AS is_warning,\n",
+        "  CASE\n",
+        "    WHEN t.worst_status = 'pass' THEN 1\n",
+        "    ELSE 0\n",
+        "  END AS is_pass,\n",
+        "  CASE\n",
+        "    WHEN t.worst_status = 'pass' THEN 0\n",
+        "    ELSE t.streak_runs\n",
+        "  END AS view_streak_runs,\n",
+        "  'Open →' AS open_text,\n",
+        "  url_encode(t.table_label) AS table_url\n",
+        "FROM\n",
+        "  v_simple_table_daily_ext t\n",
+        "    LEFT JOIN streak s\n",
+        "      ON s.table_label = t.table_label\n",
+        "WHERE\n",
+        "  t.day_rank = 1\n",
+        "  AND t.project_label = :area\n",
+        "ORDER BY\n",
+        "  is_unknown,\n",
+        "  t.status_order,\n",
+        "  rows_failed DESC,\n",
+        "  t.table_label"
+      ],
+      "parameters": [
+        {
+          "displayName": "Project",
+          "keyword": "area",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "demo_project"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_s4_rules",
+      "displayName": "ds_s4_rules",
+      "queryLines": [
+        "-- ds_s4_rules: one row per rule assignment on its table's newest run day, with the 4.5 columns and rule_sort for the 4.4 pivot.\n",
+        "WITH newest AS (\n",
+        "  SELECT\n",
+        "    table_label,\n",
+        "    run_date\n",
+        "\n",
+        "\n",
+        "  FROM\n",
+        "    v_simple_table_daily_ext\n",
+        "\n",
+        "\n",
+        "  WHERE\n",
+        "    day_rank = 1\n",
+        "),\n",
+        "r AS (\n",
+        "  SELECT\n",
+        "    d.*\n",
+        "\n",
+        "\n",
+        "  FROM\n",
+        "    v_simple_rule_daily_ext d\n",
+        "      JOIN newest n\n",
+        "        ON n.table_label = d.table_label\n",
+        "        AND n.run_date = d.run_date\n",
+        "\n",
+        "\n",
+        "  WHERE\n",
+        "    d.rule_assignment_id IS NOT NULL\n",
+        "    AND d.table_label = :table\n",
+        ")\n",
+        "SELECT\n",
+        "  r.project_label,\n",
+        "  r.table_label,\n",
+        "  r.rule_assignment_id,\n",
+        "  ROW_NUMBER() OVER (\n",
+        "      PARTITION BY r.table_label\n",
+        "      ORDER BY r.status_order, COALESCE(r.rows_failed, 0) DESC, r.rule_assignment_id\n",
+        "    ) AS rule_sort,\n",
+        "  concat(\n",
+        "    COALESCE(NULLIF(r.rule_description, ''), r.rule_name, 'Rule no longer exists'),\n",
+        "    CASE\n",
+        "      WHEN r.quarantine THEN ' · quarantine'\n",
+        "      ELSE ''\n",
+        "    END\n",
+        "  ) AS what_text,\n",
+        "  COALESCE(r.dimension_label, 'Unknown type') AS dimension_label,\n",
+        "  COALESCE(r.criticality_label, '—') AS criticality_label,\n",
+        "  concat(r.status_symbol, ' ', r.status_label) AS last_status_text,\n",
+        "  r.status_label,\n",
+        "  r.status_order,\n",
+        "  COALESCE(r.rows_failed, 0) AS rows_failed,\n",
+        "  CASE\n",
+        "    WHEN\n",
+        "      r.status IN ('warning', 'error')\n",
+        "      AND r.streak_start IS NOT NULL\n",
+        "    THEN\n",
+        "      date_format(r.streak_start, 'dd/MM')\n",
+        "    ELSE '—'\n",
+        "  END AS failing_since,\n",
+        "  COALESCE(r.rule_name, '—') AS rule_name,\n",
+        "  COALESCE(r.checked_columns, '—') AS checked_columns\n",
+        "\n",
+        "\n",
+        "FROM\n",
+        "  r\n",
+        "ORDER BY\n",
+        "  r.table_label,\n",
+        "  rule_sort"
+      ],
+      "parameters": [
+        {
+          "displayName": "Table",
+          "keyword": "table",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Choose a table"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_s4_history",
+      "displayName": "ds_s4_history",
+      "queryLines": [
+        "-- ds_s4_history: per rule assignment and each of its table's last 10 run days, the status cell for the 4.4 pivot (rows ordered like 4.5).\n",
+        "WITH days AS (\n",
+        "  SELECT\n",
+        "    table_label,\n",
+        "    run_date,\n",
+        "    day_rank\n",
+        "\n",
+        "\n",
+        "  FROM\n",
+        "    v_simple_table_daily_ext\n",
+        "\n",
+        "\n",
+        "  WHERE\n",
+        "    day_rank <= 10\n",
+        "),\n",
+        "newest AS (\n",
+        "  SELECT\n",
+        "    d.table_label,\n",
+        "    d.rule_assignment_id,\n",
+        "    ROW_NUMBER() OVER (\n",
+        "        PARTITION BY d.table_label\n",
+        "        ORDER BY d.status_order, COALESCE(d.rows_failed, 0) DESC, d.rule_assignment_id\n",
+        "      ) AS rule_sort\n",
+        "\n",
+        "\n",
+        "  FROM\n",
+        "    v_simple_rule_daily_ext d\n",
+        "      JOIN days n\n",
+        "        ON n.table_label = d.table_label\n",
+        "        AND n.run_date = d.run_date\n",
+        "        AND n.day_rank = 1\n",
+        "\n",
+        "\n",
+        "  WHERE\n",
+        "    d.rule_assignment_id IS NOT NULL\n",
+        ")\n",
+        "SELECT\n",
+        "  r.project_label,\n",
+        "  r.table_label,\n",
+        "  r.rule_assignment_id,\n",
+        "  COALESCE(n.rule_sort, 1000 + r.rule_assignment_id) AS rule_sort,\n",
+        "  COALESCE(r.dimension_label, 'Unknown type') AS dimension_label,\n",
+        "  r.run_date,\n",
+        "  date_format(r.run_date, 'dd/MM') AS day_label,\n",
+        "  date_format(r.run_date, 'yyyy-MM-dd') AS run_key,\n",
+        "  concat(r.status_symbol, ' ', r.status_label) AS cell_text,\n",
+        "  r.status_label,\n",
+        "  concat(\n",
+        "    COALESCE(NULLIF(r.rule_description, ''), r.rule_name, 'Rule no longer exists'),\n",
+        "    ' · ',\n",
+        "    date_format(r.run_date, 'dd/MM/yyyy'),\n",
+        "    ': ',\n",
+        "    r.status_label\n",
+        "  ) AS cell_tooltip\n",
+        "\n",
+        "\n",
+        "FROM\n",
+        "  v_simple_rule_daily_ext r\n",
+        "    JOIN days d\n",
+        "      ON d.table_label = r.table_label\n",
+        "      AND d.run_date = r.run_date\n",
+        "    LEFT JOIN newest n\n",
+        "      ON n.table_label = r.table_label\n",
+        "      AND n.rule_assignment_id = r.rule_assignment_id\n",
+        "\n",
+        "\n",
+        "WHERE\n",
+        "  r.rule_assignment_id IS NOT NULL\n",
+        "  AND r.table_label = :table\n",
+        "ORDER BY\n",
+        "  r.table_label,\n",
+        "  rule_sort,\n",
+        "  r.run_date"
+      ],
+      "parameters": [
+        {
+          "displayName": "Table",
+          "keyword": "table",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Choose a table"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_s4_table_days",
+      "displayName": "ds_s4_table_days",
+      "queryLines": [
+        "-- ds_s4_table_days: per table, its last 10 run days with failed and evaluated rows plus the active rule count; feeds 4.1-4.3.\n",
+        "SELECT\n",
+        "  t.project_label,\n",
+        "  t.table_label,\n",
+        "  t.run_date,\n",
+        "  t.day_rank,\n",
+        "  t.day_rank = 1 AS is_newest,\n",
+        "  t.day_rank = 2 AS is_previous,\n",
+        "  COALESCE(t.rows_failed, 0) AS rows_failed,\n",
+        "  COALESCE(t.rows_evaluated, 0) AS rows_evaluated,\n",
+        "  COALESCE(c.table_active_rule_count, 0) AS active_rule_count\n",
+        "\n",
+        "\n",
+        "FROM\n",
+        "  v_simple_table_daily_ext t\n",
+        "    LEFT JOIN (\n",
+        "      SELECT\n",
+        "        table_label,\n",
+        "        MAX(table_active_rule_count) AS table_active_rule_count\n",
+        "\n",
+        "\n",
+        "      FROM\n",
+        "        v_simple_coverage_ext\n",
+        "\n",
+        "\n",
+        "      GROUP BY\n",
+        "        table_label\n",
+        "    ) c\n",
+        "      ON c.table_label = t.table_label\n",
+        "\n",
+        "\n",
+        "WHERE\n",
+        "  t.day_rank <= 10\n",
+        "  AND t.table_label = :table\n",
+        "ORDER BY\n",
+        "  t.table_label,\n",
+        "  t.run_date"
+      ],
+      "parameters": [
+        {
+          "displayName": "Table",
+          "keyword": "table",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Choose a table"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_s4_coverage",
+      "displayName": "ds_s4_coverage",
+      "queryLines": [
+        "-- ds_s4_coverage: per table, one cell per ACTIVE dimension (metadata.rule_dimension.is_active) ('✓ N' or 'Missing'), plus the 'Key not checked' column, for the 4.6 pivot.\n",
+        "-- test_ui and Unknown type are shown only if they have at least one rule on some table.\n",
+        "WITH c AS (\n",
+        "  SELECT\n",
+        "    v.*,\n",
+        "    SUM(v.active_rule_count) OVER (\n",
+        "        PARTITION BY COALESCE(v.rule_dimension, '~none')\n",
+        "      ) AS dim_rules_total\n",
+        "  FROM\n",
+        "    v_simple_coverage_ext v\n",
+        "),\n",
+        "active_dims AS (\n",
+        "  SELECT DISTINCT\n",
+        "    rule_dimension\n",
+        "  FROM\n",
+        "    v_simple_active_dimension_ext\n",
+        "  WHERE\n",
+        "    is_active\n",
+        ")\n",
+        "SELECT\n",
+        "  c.project_label,\n",
+        "  c.table_label,\n",
+        "  COALESCE(c.dimension_label, 'Unknown type') AS column_label,\n",
+        "  CASE\n",
+        "    WHEN c.dimension_label IS NULL THEN 98\n",
+        "    ELSE 1\n",
+        "  END AS column_order,\n",
+        "  CASE\n",
+        "    WHEN c.active_rule_count > 0 THEN concat('✓ ', c.active_rule_count)\n",
+        "    ELSE 'Missing'\n",
+        "  END AS cell_text\n",
+        "FROM\n",
+        "  c\n",
+        "    LEFT JOIN active_dims a\n",
+        "      ON a.rule_dimension = c.rule_dimension\n",
+        "WHERE\n",
+        "  c.table_label = :table\n",
+        "  AND (\n",
+        "  (\n",
+        "    c.rule_dimension IS NULL\n",
+        "    AND c.dim_rules_total > 0\n",
+        "  )\n",
+        "  OR (\n",
+        "    a.rule_dimension IS NOT NULL\n",
+        "    AND (\n",
+        "      lower(c.rule_dimension) <> 'test_ui'\n",
+        "      OR c.dim_rules_total > 0\n",
+        "    )\n",
+        "  )\n",
+        "  )\n",
+        "UNION ALL\n",
+        "SELECT DISTINCT\n",
+        "  project_label,\n",
+        "  table_label,\n",
+        "  'Key not checked' AS column_label,\n",
+        "  99 AS column_order,\n",
+        "  CASE\n",
+        "    WHEN\n",
+        "      has_primary_key\n",
+        "      AND NOT has_uniqueness_rule\n",
+        "    THEN\n",
+        "      'Yes'\n",
+        "    ELSE '—'\n",
+        "  END AS cell_text\n",
+        "FROM\n",
+        "  c\n",
+        "WHERE\n",
+        "  table_label = :table\n",
+        "ORDER BY\n",
+        "  table_label,\n",
+        "  column_order,\n",
+        "  column_label"
+      ],
+      "parameters": [
+        {
+          "displayName": "Table",
+          "keyword": "table",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Choose a table"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_opt_tables",
+      "displayName": "ds_opt_tables",
+      "queryLines": [
+        "-- ds_opt_tables: one row per table, values for the page-4 Table parameter; Unknown table last.\n",
+        "SELECT DISTINCT\n",
+        "  table_label,\n",
+        "  table_id IS NULL AS is_unknown\n",
+        "FROM\n",
+        "  v_simple_table_daily_ext\n",
+        "WHERE\n",
+        "  day_rank = 1\n",
+        "ORDER BY\n",
+        "  is_unknown,\n",
+        "  table_label"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "apo_tin_arxi",
+      "displayName": "Overview",
+      "layout": [
+        {
+          "widget": {
+            "name": "h_since",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Overview\n",
+                "\n",
+                "All runs since September 2026"
+              ]
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#DDDDDD",
+                "dark": "#2B3036"
+              },
+              "widgetBorderColor": {
+                "light": "#3F3F3F",
+                "dark": "#8A8F98"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c21_runs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s2_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`executions`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "data quality runs"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"width\": \"container\",\n  \"height\": \"container\",\n  \"padding\": {\n    \"left\": 12,\n    \"right\": 12,\n    \"top\": 6,\n    \"bottom\": 4\n  },\n  \"config\": {\n    \"autosize\": {\n      \"type\": \"fit\",\n      \"contains\": \"padding\"\n    },\n    \"view\": {\n      \"stroke\": null\n    }\n  },\n  \"transform\": [\n    {\n      \"calculate\": \"isValid(datum.v) ? format(datum.v, ',') : '—'\",\n      \"as\": \"vt\"\n    }\n  ],\n  \"layer\": [\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 50\"\n        },\n        \"font\": \"Verdana\",\n        \"fontSize\": 18,\n        \"fontWeight\": 800,\n        \"lineHeight\": 22,\n        \"color\": \"#3F3F3F\",\n        \"text\": \"data quality runs\"\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 8\"\n        },\n        \"fontSize\": 36,\n        \"fontWeight\": \"bold\",\n        \"color\": {\n          \"expr\": \"mode=='dark'?'#E8EDF5':'#14213A'\"\n        }\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"vt\"\n        }\n      }\n    }\n  ]\n}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c22_pass",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s2_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`pass_pct_all`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`pass_sub_all`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "checks passed (Pass)"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"width\": \"container\",\n  \"height\": \"container\",\n  \"padding\": {\n    \"left\": 12,\n    \"right\": 12,\n    \"top\": 6,\n    \"bottom\": 4\n  },\n  \"config\": {\n    \"autosize\": {\n      \"type\": \"fit\",\n      \"contains\": \"padding\"\n    },\n    \"view\": {\n      \"stroke\": null\n    }\n  },\n  \"transform\": [\n    {\n      \"calculate\": \"isValid(datum.v) ? format(datum.v, '.1%') : '—'\",\n      \"as\": \"vt\"\n    }\n  ],\n  \"layer\": [\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 50\"\n        },\n        \"font\": \"Verdana\",\n        \"fontSize\": 18,\n        \"fontWeight\": 800,\n        \"lineHeight\": 22,\n        \"color\": \"#3F3F3F\",\n        \"text\": \"checks passed\"\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 18\"\n        },\n        \"fontSize\": 36,\n        \"fontWeight\": \"bold\",\n        \"color\": \"#2E8B57\"\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"vt\"\n        }\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 + 26\"\n        },\n        \"fontSize\": 13,\n        \"color\": \"#7A8699\"\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"sub\"\n        }\n      }\n    }\n  ]\n}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c23_warning",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s2_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`warning_pct_all`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`warning_sub_all`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "checks with Warning"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"width\": \"container\",\n  \"height\": \"container\",\n  \"padding\": {\n    \"left\": 12,\n    \"right\": 12,\n    \"top\": 6,\n    \"bottom\": 4\n  },\n  \"config\": {\n    \"autosize\": {\n      \"type\": \"fit\",\n      \"contains\": \"padding\"\n    },\n    \"view\": {\n      \"stroke\": null\n    }\n  },\n  \"transform\": [\n    {\n      \"calculate\": \"isValid(datum.v) ? format(datum.v, '.1%') : '—'\",\n      \"as\": \"vt\"\n    }\n  ],\n  \"layer\": [\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 50\"\n        },\n        \"font\": \"Verdana\",\n        \"fontSize\": 18,\n        \"fontWeight\": 800,\n        \"lineHeight\": 22,\n        \"color\": \"#3F3F3F\",\n        \"text\": \"checks with Warning\"\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 18\"\n        },\n        \"fontSize\": 36,\n        \"fontWeight\": \"bold\",\n        \"color\": \"#E3A033\"\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"vt\"\n        }\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 + 26\"\n        },\n        \"fontSize\": 13,\n        \"color\": \"#7A8699\"\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"sub\"\n        }\n      }\n    }\n  ]\n}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c24_error",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s2_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`error_pct_all`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`error_sub_all`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "checks with Failure"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"width\": \"container\",\n  \"height\": \"container\",\n  \"padding\": {\n    \"left\": 12,\n    \"right\": 12,\n    \"top\": 6,\n    \"bottom\": 4\n  },\n  \"config\": {\n    \"autosize\": {\n      \"type\": \"fit\",\n      \"contains\": \"padding\"\n    },\n    \"view\": {\n      \"stroke\": null\n    }\n  },\n  \"transform\": [\n    {\n      \"calculate\": \"isValid(datum.v) ? format(datum.v, '.1%') : '—'\",\n      \"as\": \"vt\"\n    }\n  ],\n  \"layer\": [\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 50\"\n        },\n        \"font\": \"Verdana\",\n        \"fontSize\": 18,\n        \"fontWeight\": 800,\n        \"lineHeight\": 22,\n        \"color\": \"#3F3F3F\",\n        \"text\": \"checks with Failure\"\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 18\"\n        },\n        \"fontSize\": 36,\n        \"fontWeight\": \"bold\",\n        \"color\": \"#D64545\"\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"vt\"\n        }\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 + 26\"\n        },\n        \"fontSize\": 13,\n        \"color\": \"#7A8699\"\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"sub\"\n        }\n      }\n    }\n  ]\n}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "h_time",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### How we are doing over time"
+              ]
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#DDDDDD",
+                "dark": "#2B3036"
+              },
+              "widgetBorderColor": {
+                "light": "#3F3F3F",
+                "dark": "#8A8F98"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "b25_daily",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s2_daily",
+                  "fields": [
+                    {
+                      "name": "status_label",
+                      "expression": "`status_label`"
+                    },
+                    {
+                      "name": "daily(run_day)",
+                      "expression": "DATE_TRUNC(\"DAY\", `run_day`)"
+                    },
+                    {
+                      "name": "sum(result_count)",
+                      "expression": "SUM(`result_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Status",
+                  "fieldName": "status_label",
+                  "scale": {
+                    "mappings": [
+                      {
+                        "color": "#D64545",
+                        "value": "Failure"
+                      },
+                      {
+                        "color": "#E3A033",
+                        "value": "Warning"
+                      },
+                      {
+                        "color": "#8A8F98",
+                        "value": "Did not run"
+                      }
+                    ],
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Failure",
+                        "Warning",
+                        "Did not run"
+                      ]
+                    },
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "Day",
+                  "fieldName": "daily(run_day)",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Checks",
+                  "fieldName": "sum(result_count)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 0,
+                      "type": "max"
+                    },
+                    "type": "number-plain"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Each day's problems. A gap means no check ran that day."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">Warnings and failures per day </span>\n\n### <span style=\"text-align:center;display:block\"><span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">(last 30 days)</span></span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                }
+              },
+              "mark": {
+                "layout": "stack"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "l26_monthly",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s2_monthly",
+                  "fields": [
+                    {
+                      "name": "series_label",
+                      "expression": "`series_label`"
+                    },
+                    {
+                      "name": "monthly(run_month)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `run_month`)"
+                    },
+                    {
+                      "name": "max(share)",
+                      "expression": "MAX(`share`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Status",
+                  "fieldName": "series_label",
+                  "scale": {
+                    "mappings": [
+                      {
+                        "color": "#E3A033",
+                        "value": "Warning"
+                      },
+                      {
+                        "color": "#D64545",
+                        "value": "Failure"
+                      }
+                    ],
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "display": {
+                    "type": "x-max"
+                  },
+                  "show": true
+                },
+                "x": {
+                  "displayName": "Month",
+                  "fieldName": "monthly(run_month)",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Share",
+                  "fieldName": "max(share)",
+                  "format": {
+                    "decimalPlaces": {
+                      "places": 1,
+                      "type": "exact"
+                    },
+                    "type": "number-percent"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Share of warnings and failures each month. Lower is better."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">% warnings and % failures </span>\n\n### <span style=\"text-align:center;display:block\"><span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">per month (since the start)</span></span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                }
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "t27_areas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s2_areas",
+                  "fields": [
+                    {
+                      "name": "project_label",
+                      "expression": "`project_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "contentAlignment": "left",
+                    "displayName": "Project",
+                    "fieldName": "project_label",
+                    "style": {
+                      "backgroundColor": {
+                        "position": 3,
+                        "themeColorType": "visualizationColors"
+                      },
+                      "foregroundColor": {
+                        "themeColorType": "widgetBackgroundColor"
+                      },
+                      "type": "basic"
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Most problems first. For details: right-click a row → go to page."
+                },
+                "headerAlignment": "center",
+                "showDescription": false,
+                "showTitle": true,
+                "title": "Projects: last 7 days"
+              },
+              "version": 2,
+              "widgetType": "table"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "2bcdb78e",
+      "displayName": "Latest run",
+      "layout": [
+        {
+          "widget": {
+            "name": "h_latest",
+            "multilineTextboxSpec": {
+              "lines": [
+                "<p align=\"center\">\n",
+                "\n",
+                "## Latest run\n",
+                "\n",
+                "compared with the previous day\n",
+                "\n",
+                "</p>"
+              ]
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#DDDDDD",
+                "dark": "#2B3036"
+              },
+              "widgetBorderColor": {
+                "light": "#3F3F3F",
+                "dark": "#8A8F98"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c11_completed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`e_end_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "finished"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v != '' ? datum.v : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 34\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"Finished\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 8\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":{\"expr\":\"mode=='dark'?'#E8EDF5':'#14213A'\"}},\"encoding\":{\"text\":{\"field\":\"vt\"}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c12_score",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`score_txt`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`score_sub`"
+                    },
+                    {
+                      "name": "d",
+                      "expression": "`score_delta`"
+                    },
+                    {
+                      "name": "dc",
+                      "expression": "`score_dcol`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  },
+                  {
+                    "fieldName": "d"
+                  },
+                  {
+                    "fieldName": "dc"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "Quality score, latest run"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v != '' ? datum.v : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 54\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"Quality score\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 28\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":{\"expr\":\"mode=='dark'?'#E8EDF5':'#14213A'\"}},\"encoding\":{\"text\":{\"field\":\"vt\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 16\"},\"fontSize\":13,\"color\":\"#7A8699\"},\"encoding\":{\"text\":{\"field\":\"sub\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 36\"},\"fontSize\":13},\"encoding\":{\"text\":{\"field\":\"d\"},\"color\":{\"field\":\"dc\",\"type\":\"nominal\",\"scale\":null}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c13_pass",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`pass_txt`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`pass_sub`"
+                    },
+                    {
+                      "name": "d",
+                      "expression": "`pass_delta`"
+                    },
+                    {
+                      "name": "dc",
+                      "expression": "`pass_dcol`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  },
+                  {
+                    "fieldName": "d"
+                  },
+                  {
+                    "fieldName": "dc"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "Passed"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v != '' ? datum.v : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 54\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"Passed\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 28\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":\"#2E8B57\"},\"encoding\":{\"text\":{\"field\":\"vt\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 16\"},\"fontSize\":13,\"color\":\"#7A8699\"},\"encoding\":{\"text\":{\"field\":\"sub\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 36\"},\"fontSize\":13},\"encoding\":{\"text\":{\"field\":\"d\"},\"color\":{\"field\":\"dc\",\"type\":\"nominal\",\"scale\":null}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c14_warning",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`warning_txt`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`warning_sub`"
+                    },
+                    {
+                      "name": "d",
+                      "expression": "`warning_delta`"
+                    },
+                    {
+                      "name": "dc",
+                      "expression": "`warning_dcol`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  },
+                  {
+                    "fieldName": "d"
+                  },
+                  {
+                    "fieldName": "dc"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "Warnings"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v != '' ? datum.v : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 54\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"Warnings\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 28\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":\"#E3A033\"},\"encoding\":{\"text\":{\"field\":\"vt\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 16\"},\"fontSize\":13,\"color\":\"#7A8699\"},\"encoding\":{\"text\":{\"field\":\"sub\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 36\"},\"fontSize\":13},\"encoding\":{\"text\":{\"field\":\"d\"},\"color\":{\"field\":\"dc\",\"type\":\"nominal\",\"scale\":null}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 5,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c15_error",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`error_txt`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`error_sub`"
+                    },
+                    {
+                      "name": "d",
+                      "expression": "`error_delta`"
+                    },
+                    {
+                      "name": "dc",
+                      "expression": "`error_dcol`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  },
+                  {
+                    "fieldName": "d"
+                  },
+                  {
+                    "fieldName": "dc"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "Failures"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v != '' ? datum.v : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 54\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"Failures\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 28\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":\"#D64545\"},\"encoding\":{\"text\":{\"field\":\"vt\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 16\"},\"fontSize\":13,\"color\":\"#7A8699\"},\"encoding\":{\"text\":{\"field\":\"sub\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 36\"},\"fontSize\":13},\"encoding\":{\"text\":{\"field\":\"d\"},\"color\":{\"field\":\"dc\",\"type\":\"nominal\",\"scale\":null}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c16_code_error",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`code_error_txt`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`code_error_sub`"
+                    },
+                    {
+                      "name": "d",
+                      "expression": "`code_error_delta`"
+                    },
+                    {
+                      "name": "dc",
+                      "expression": "`code_error_dcol`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  },
+                  {
+                    "fieldName": "d"
+                  },
+                  {
+                    "fieldName": "dc"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "checks could not run (code\\_error)"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v != '' ? datum.v : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 54\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"checks could not run (code_error)\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 28\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":\"#8A8F98\"},\"encoding\":{\"text\":{\"field\":\"vt\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 16\"},\"fontSize\":13,\"color\":\"#7A8699\"},\"encoding\":{\"text\":{\"field\":\"sub\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 36\"},\"fontSize\":13},\"encoding\":{\"text\":{\"field\":\"d\"},\"color\":{\"field\":\"dc\",\"type\":\"nominal\",\"scale\":null}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c17_quarantine",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_kpis",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "`quarantined_txt`"
+                    },
+                    {
+                      "name": "sub",
+                      "expression": "`quarantine_sub`"
+                    },
+                    {
+                      "name": "d",
+                      "expression": "`quarantined_delta`"
+                    },
+                    {
+                      "name": "dc",
+                      "expression": "`quarantined_dcol`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  },
+                  {
+                    "fieldName": "sub"
+                  },
+                  {
+                    "fieldName": "d"
+                  },
+                  {
+                    "fieldName": "dc"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "rows set aside (quarantine)"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v != '' ? datum.v : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 54\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"rows set aside (quarantine)\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 28\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":{\"expr\":\"mode=='dark'?'#E8EDF5':'#14213A'\"}},\"encoding\":{\"text\":{\"field\":\"vt\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 16\"},\"fontSize\":13,\"color\":\"#7A8699\"},\"encoding\":{\"text\":{\"field\":\"sub\"}}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 36\"},\"fontSize\":13},\"encoding\":{\"text\":{\"field\":\"d\"},\"color\":{\"field\":\"dc\",\"type\":\"nominal\",\"scale\":null}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 8,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "h_charts",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### The latest run in charts\n",
+                "\n",
+                "Only the results of the latest run"
+              ]
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#DDDDDD",
+                "dark": "#2B3036"
+              },
+              "widgetBorderColor": {
+                "light": "#3F3F3F",
+                "dark": "#8A8F98"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b18_tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_tables",
+                  "fields": [
+                    {
+                      "name": "status_label",
+                      "expression": "`status_label`"
+                    },
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "sum(rows_failed)",
+                      "expression": "SUM(`rows_failed`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Status",
+                  "fieldName": "status_label",
+                  "scale": {
+                    "mappings": [
+                      {
+                        "color": "#D64545",
+                        "value": "Failure"
+                      },
+                      {
+                        "color": "#E3A033",
+                        "value": "Warning"
+                      },
+                      {
+                        "color": "#8A8F98",
+                        "value": "Did not run"
+                      },
+                      {
+                        "color": "#2E8B57",
+                        "value": "Pass"
+                      }
+                    ],
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "Table",
+                  "fieldName": "table_label",
+                  "scale": {
+                    "sort": {
+                      "by": "y-reversed"
+                    },
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "Rows with errors",
+                  "fieldName": "sum(rows_failed)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 0,
+                      "type": "max"
+                    },
+                    "hideGroupSeparator": false,
+                    "type": "number-plain"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Rows with errors, per table. Right-click a bar to open the table."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">Rows with errors per table (top 5)</span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                }
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b19_areas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_areas",
+                  "fields": [
+                    {
+                      "name": "status_label",
+                      "expression": "`status_label`"
+                    },
+                    {
+                      "name": "max(pass_count)",
+                      "expression": "MAX(`pass_count`)"
+                    },
+                    {
+                      "name": "sum(result_count)",
+                      "expression": "SUM(`result_count`)"
+                    },
+                    {
+                      "name": "project_label",
+                      "expression": "`project_label`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Status",
+                  "fieldName": "status_label",
+                  "scale": {
+                    "mappings": [
+                      {
+                        "color": "#D64545",
+                        "value": "Failure"
+                      },
+                      {
+                        "color": "#E3A033",
+                        "value": "Warning"
+                      },
+                      {
+                        "color": "#8A8F98",
+                        "value": "Did not run"
+                      }
+                    ],
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Failure",
+                        "Warning",
+                        "Did not run"
+                      ]
+                    },
+                    "type": "categorical"
+                  }
+                },
+                "extra": [
+                  {
+                    "displayName": "Passed",
+                    "fieldName": "max(pass_count)"
+                  }
+                ],
+                "x": {
+                  "displayName": "Checks",
+                  "fieldName": "sum(result_count)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 0,
+                      "type": "max"
+                    },
+                    "type": "number-plain"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "displayName": "Project",
+                  "fieldName": "project_label",
+                  "scale": {
+                    "sort": {
+                      "by": "x-reversed"
+                    },
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Where today's problems are. Passes are not drawn. Right-click to open the project."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": "Results per project"
+              },
+              "mark": {
+                "layout": "stack"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 13,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "t110_dimensions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s1_dimensions",
+                  "fields": [
+                    {
+                      "name": "dimension_label",
+                      "expression": "`dimension_label`"
+                    },
+                    {
+                      "name": "pass_count",
+                      "expression": "`pass_count`"
+                    },
+                    {
+                      "name": "warning_count",
+                      "expression": "`warning_count`"
+                    },
+                    {
+                      "name": "error_count",
+                      "expression": "`error_count`"
+                    },
+                    {
+                      "name": "code_error_count",
+                      "expression": "`code_error_count`"
+                    },
+                    {
+                      "name": "pass_pct",
+                      "expression": "`pass_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Check type",
+                    "fieldName": "dimension_label",
+                    "headerAlignment": "center",
+                    "style": {
+                      "backgroundColor": {
+                        "position": 3,
+                        "themeColorType": "visualizationColors"
+                      },
+                      "foregroundColor": {
+                        "themeColorType": "widgetBackgroundColor"
+                      },
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Pass",
+                    "fieldName": "pass_count",
+                    "headerAlignment": "center",
+                    "style": {
+                      "rules": [
+                        {
+                          "backgroundColor": "#E2F3E8",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "0"
+                            },
+                            "operator": ">"
+                          }
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Warning",
+                    "fieldName": "warning_count",
+                    "headerAlignment": "center",
+                    "style": {
+                      "rules": [
+                        {
+                          "backgroundColor": "#FDF0D6",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "0"
+                            },
+                            "operator": ">"
+                          }
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Failure",
+                    "fieldName": "error_count",
+                    "headerAlignment": "center",
+                    "style": {
+                      "rules": [
+                        {
+                          "backgroundColor": "#FBE3E1",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "0"
+                            },
+                            "operator": ">"
+                          }
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Did not run",
+                    "fieldName": "code_error_count",
+                    "headerAlignment": "center",
+                    "style": {
+                      "rules": [
+                        {
+                          "backgroundColor": "#ECEEF1",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "0"
+                            },
+                            "operator": ">"
+                          }
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "% passed",
+                    "fieldName": "pass_pct",
+                    "format": {
+                      "decimalPlaces": {
+                        "places": 1,
+                        "type": "exact"
+                      },
+                      "type": "number-percent"
+                    },
+                    "headerAlignment": "center"
+                  }
+                ]
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "What kind of problems we have: missing, malformed, duplicate or inconsistent data."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">Checks per type</span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                }
+              },
+              "version": 2,
+              "widgetType": "table"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "area",
+      "displayName": "Project",
+      "layout": [
+        {
+          "widget": {
+            "name": "h_area",
+            "spec": {
+              "encodings": {
+                "text": {
+                  "fields": [],
+                  "lines": [
+                    "## Project\n",
+                    "\n",
+                    "Pick a project at the top right, or open it from the page Overview."
+                  ]
+                }
+              },
+              "version": 1,
+              "widgetType": "text"
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#DDDDDD",
+                "dark": "#2B3036"
+              },
+              "widgetBorderColor": {
+                "light": "#3F3F3F",
+                "dark": "#8A8F98"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 7,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "f_area",
+            "queries": [
+              {
+                "name": "dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d6c65cf016c8a15f29126d8b33a2_project_label",
+                "query": {
+                  "datasetName": "ds_s2_areas",
+                  "fields": [
+                    {
+                      "name": "project_label",
+                      "expression": "`project_label`"
+                    },
+                    {
+                      "name": "project_label_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a6ff19c2857d6f1e029cc4cb_area",
+                "query": {
+                  "datasetName": "ds_s3_tables",
+                  "parameters": [
+                    {
+                      "name": "area",
+                      "keyword": "area"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a685184f924afd52ab966c91_area",
+                "query": {
+                  "datasetName": "ds_s3_daily",
+                  "parameters": [
+                    {
+                      "name": "area",
+                      "keyword": "area"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "project_label",
+                    "queryName": "dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d6c65cf016c8a15f29126d8b33a2_project_label"
+                  },
+                  {
+                    "parameterName": "area",
+                    "queryName": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a6ff19c2857d6f1e029cc4cb_area"
+                  },
+                  {
+                    "parameterName": "area",
+                    "queryName": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a685184f924afd52ab966c91_area"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Project"
+              },
+              "selection": {
+                "defaultSelection": {
+                  "values": {
+                    "dataType": "STRING",
+                    "values": [
+                      {
+                        "value": "demo_project"
+                      }
+                    ]
+                  }
+                }
+              },
+              "style": {
+                "fontColor": {
+                  "light": "#FFFFFF"
+                }
+              },
+              "version": 2,
+              "widgetType": "filter-single-select"
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#535050"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c31_tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s3_tables",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "COUNT(`table_label`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": true,
+                "title": "tables in the project"
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) && datum.v > 0 ? format(datum.v, ',') : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 34\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":\"tables in the project\"}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 8\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":{\"expr\":\"mode=='dark'?'#E8EDF5':'#14213A'\"}},\"encoding\":{\"text\":{\"field\":\"vt\"}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b34_daily",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s3_daily",
+                  "fields": [
+                    {
+                      "name": "status_label",
+                      "expression": "`status_label`"
+                    },
+                    {
+                      "name": "sum(result_pct)",
+                      "expression": "SUM(`result_pct`)"
+                    },
+                    {
+                      "name": "daily(run_day)",
+                      "expression": "DATE_TRUNC(\"DAY\", `run_day`)"
+                    },
+                    {
+                      "name": "sum(result_count)",
+                      "expression": "SUM(`result_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "color": {
+                  "displayName": "Status",
+                  "fieldName": "status_label",
+                  "scale": {
+                    "mappings": [
+                      {
+                        "color": "#2E8B57",
+                        "value": "Pass"
+                      },
+                      {
+                        "color": "#D64545",
+                        "value": "Failure"
+                      },
+                      {
+                        "color": "#E3A033",
+                        "value": "Warning"
+                      },
+                      {
+                        "color": "#8A8F98",
+                        "value": "Did not run"
+                      }
+                    ],
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Pass",
+                        "Warning",
+                        "Failure",
+                        "Did not run"
+                      ]
+                    },
+                    "type": "categorical"
+                  }
+                },
+                "extra": [
+                  {
+                    "displayName": "% of the day",
+                    "fieldName": "sum(result_pct)",
+                    "format": {
+                      "decimalPlaces": {
+                        "places": 1,
+                        "type": "exact"
+                      },
+                      "type": "number-percent"
+                    }
+                  }
+                ],
+                "x": {
+                  "displayName": "Day",
+                  "fieldName": "daily(run_day)",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "Checks",
+                  "fieldName": "sum(result_count)",
+                  "format": {
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "places": 0,
+                      "type": "max"
+                    },
+                    "type": "number-plain"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Results per day for this project. Hover a segment for the count and % of that day's checks."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": "Successes, warnings and failures per day (30 days)"
+              },
+              "mark": {
+                "layout": "stack"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "t35_tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s3_tables",
+                  "fields": [
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "last_status_text",
+                      "expression": "`last_status_text`"
+                    },
+                    {
+                      "name": "streak_text",
+                      "expression": "`streak_text`"
+                    },
+                    {
+                      "name": "streak_from",
+                      "expression": "`streak_from`"
+                    },
+                    {
+                      "name": "rows_failed_text",
+                      "expression": "`rows_failed_text`"
+                    },
+                    {
+                      "name": "open_text",
+                      "expression": "`open_text`"
+                    },
+                    {
+                      "name": "table_url",
+                      "expression": "`table_url`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "displayName": "Table",
+                    "fieldName": "table_label"
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Latest status",
+                    "fieldName": "last_status_text",
+                    "headerAlignment": "center",
+                    "style": {
+                      "rules": [
+                        {
+                          "backgroundColor": "#FBE3E1",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Failure"
+                            },
+                            "operator": "contains"
+                          }
+                        },
+                        {
+                          "backgroundColor": "#FDF0D6",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Warning"
+                            },
+                            "operator": "contains"
+                          }
+                        },
+                        {
+                          "backgroundColor": "#ECEEF1",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Did not run"
+                            },
+                            "operator": "contains"
+                          }
+                        },
+                        {
+                          "backgroundColor": "#E2F3E8",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Pass"
+                            },
+                            "operator": "contains"
+                          }
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Consecutive runs",
+                    "fieldName": "streak_text",
+                    "headerAlignment": "center"
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Since",
+                    "fieldName": "streak_from",
+                    "headerAlignment": "center"
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Rows with errors",
+                    "fieldName": "rows_failed_text",
+                    "headerAlignment": "center"
+                  },
+                  {
+                    "actions": {
+                      "click": {
+                        "openInNewTab": false,
+                        "type": "link",
+                        "urlTemplate": "https://adb-1451829595406012.12.azuredatabricks.net/sql/dashboardsv3/01f1d6c2ed9c13c0809be2aa20a34a82/pages/table?o=1451829595406012&f_table~f_table.s={{ table_url }}"
+                      }
+                    },
+                    "contentAlignment": "center",
+                    "displayName": " ",
+                    "fieldName": "open_text",
+                    "headerAlignment": "center"
+                  }
+                ]
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Consecutive runs = runs in a row without Pass. For details: right-click a row → go to page."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": "Tables in the project"
+              },
+              "version": 2,
+              "widgetType": "table"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "c32_error",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s3_tables",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "SUM(`is_error`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "with Failure in the latest check"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) ? format(datum.v, ',') : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 45\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":[\"tables with Failure\",\"in the latest check\"]}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 3\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":\"#D64545\"},\"encoding\":{\"text\":{\"field\":\"vt\"}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c33_warning",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s3_tables",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "SUM(`is_warning`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "with Warning in the latest check"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) ? format(datum.v, ',') : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 45\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":[\"tables with Warning\",\"in the latest check\"]}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 3\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":\"#E3A033\"},\"encoding\":{\"text\":{\"field\":\"vt\"}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c3x_pass",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s3_tables",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "SUM(`is_pass`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "with Pass in the latest check"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\"$schema\":\"https://vega.github.io/schema/vega-lite/v5.json\",\"data\":{\"name\":\"databricks_query\"},\"width\":\"container\",\"height\":\"container\",\"padding\":{\"left\":12,\"right\":12,\"top\":6,\"bottom\":4},\"config\":{\"autosize\":{\"type\":\"fit\",\"contains\":\"padding\"},\"view\":{\"stroke\":null}},\"transform\":[{\"calculate\":\"isValid(datum.v) ? format(datum.v, ',') : '—'\",\"as\":\"vt\"}],\"layer\":[{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 - 45\"},\"font\":\"Verdana\",\"fontSize\":18,\"fontWeight\":800,\"lineHeight\":22,\"color\":\"#3F3F3F\",\"text\":[\"tables with Success\",\"in the latest check\"]}},{\"mark\":{\"type\":\"text\",\"align\":\"center\",\"baseline\":\"top\",\"x\":{\"expr\":\"width / 2\"},\"y\":{\"expr\":\"height / 2 + 3\"},\"fontSize\":36,\"fontWeight\":\"bold\",\"color\":\"#2E8B57\"},\"encoding\":{\"text\":{\"field\":\"vt\"}}}]}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "table",
+      "displayName": "Table",
+      "layout": [
+        {
+          "widget": {
+            "name": "h_table",
+            "spec": {
+              "encodings": {
+                "text": {
+                  "fields": [],
+                  "lines": [
+                    "## Table\n",
+                    "\n",
+                    "Pick a table at the top right, or open it from the page Project."
+                  ]
+                }
+              },
+              "version": 1,
+              "widgetType": "text"
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#DDDDDD",
+                "dark": "#2B3036"
+              },
+              "widgetBorderColor": {
+                "light": "#3F3F3F",
+                "dark": "#8A8F98"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 9,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "f_table",
+            "queries": [
+              {
+                "name": "dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d70abe101ba78a70bfc9d913e9e4_table_label",
+                "query": {
+                  "datasetName": "ds_opt_tables",
+                  "fields": [
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "table_label_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a7711e8bba18bd336cc5cc18_table",
+                "query": {
+                  "datasetName": "ds_s4_rules",
+                  "parameters": [
+                    {
+                      "name": "table",
+                      "keyword": "table"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a7bb1717bdfbf84ba2b433a5_table",
+                "query": {
+                  "datasetName": "ds_s4_history",
+                  "parameters": [
+                    {
+                      "name": "table",
+                      "keyword": "table"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a8041012ba03b63c3de5b624_table",
+                "query": {
+                  "datasetName": "ds_s4_table_days",
+                  "parameters": [
+                    {
+                      "name": "table",
+                      "keyword": "table"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a84d1be69727ea912f382161_table",
+                "query": {
+                  "datasetName": "ds_s4_coverage",
+                  "parameters": [
+                    {
+                      "name": "table",
+                      "keyword": "table"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "table_label",
+                    "queryName": "dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d70abe101ba78a70bfc9d913e9e4_table_label"
+                  },
+                  {
+                    "parameterName": "table",
+                    "queryName": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a7711e8bba18bd336cc5cc18_table"
+                  },
+                  {
+                    "parameterName": "table",
+                    "queryName": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a7bb1717bdfbf84ba2b433a5_table"
+                  },
+                  {
+                    "parameterName": "table",
+                    "queryName": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a8041012ba03b63c3de5b624_table"
+                  },
+                  {
+                    "parameterName": "table",
+                    "queryName": "parameter_dashboards/01f1d6c2ed9c13c0809be2aa20a34a82/datasets/01f1d705a84d1be69727ea912f382161_table"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "Table"
+                }
+              },
+              "style": {
+                "fontColor": {
+                  "light": "#FFFFFF"
+                }
+              },
+              "version": 2,
+              "widgetType": "filter-single-select"
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#535050"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c41_checks",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s4_rules",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "COUNT(`rule_assignment_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "checks on this table"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"width\": \"container\",\n  \"height\": \"container\",\n  \"padding\": {\n    \"left\": 12,\n    \"right\": 12,\n    \"top\": 6,\n    \"bottom\": 4\n  },\n  \"config\": {\n    \"autosize\": {\n      \"type\": \"fit\",\n      \"contains\": \"padding\"\n    },\n    \"view\": {\n      \"stroke\": null\n    }\n  },\n  \"transform\": [\n    {\n      \"calculate\": \"isValid(datum.v) && datum.v > 0 ? format(datum.v, ',') : '—'\",\n      \"as\": \"vt\"\n    }\n  ],\n  \"layer\": [\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 45\"\n        },\n        \"font\": \"Verdana\",\n        \"fontSize\": 18,\n        \"fontWeight\": 800,\n        \"lineHeight\": 22,\n        \"color\": \"#3F3F3F\",\n        \"text\": \"checks on this table\"\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 8\"\n        },\n        \"fontSize\": 36,\n        \"fontWeight\": \"bold\",\n        \"color\": {\n          \"expr\": \"mode=='dark'?'#E8EDF5':'#14213A'\"\n        }\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"vt\"\n        }\n      }\n    }\n  ]\n}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c42_failed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s4_rules",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "SUM(`rows_failed`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "rows with errors in the latest check"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"width\": \"container\",\n  \"height\": \"container\",\n  \"padding\": {\n    \"left\": 12,\n    \"right\": 12,\n    \"top\": 6,\n    \"bottom\": 4\n  },\n  \"config\": {\n    \"autosize\": {\n      \"type\": \"fit\",\n      \"contains\": \"padding\"\n    },\n    \"view\": {\n      \"stroke\": null\n    }\n  },\n  \"transform\": [\n    {\n      \"calculate\": \"isValid(datum.v) ? format(datum.v, ',') : '—'\",\n      \"as\": \"vt\"\n    }\n  ],\n  \"layer\": [\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 45\"\n        },\n        \"font\": \"Verdana\",\n        \"fontSize\": 18,\n        \"fontWeight\": 800,\n        \"lineHeight\": 22,\n        \"color\": \"#3F3F3F\",\n        \"text\": [\n          \"rows with errors\"\n        ]\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 + 3\"\n        },\n        \"fontSize\": 36,\n        \"fontWeight\": \"bold\",\n        \"color\": {\n          \"expr\": \"mode=='dark'?'#E8EDF5':'#14213A'\"\n        }\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"vt\"\n        }\n      }\n    }\n  ]\n}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c43_checked",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s4_table_days",
+                  "fields": [
+                    {
+                      "name": "v",
+                      "expression": "SUM(`rows_evaluated`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`day_rank` IN (1)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "v"
+                  }
+                ]
+              },
+              "frame": {
+                "showDescription": false,
+                "showTitle": false,
+                "title": {
+                  "fields": [],
+                  "value": "rows checked"
+                }
+              },
+              "jsonSpec": {
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v5.json\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"width\": \"container\",\n  \"height\": \"container\",\n  \"padding\": {\n    \"left\": 12,\n    \"right\": 12,\n    \"top\": 6,\n    \"bottom\": 4\n  },\n  \"config\": {\n    \"autosize\": {\n      \"type\": \"fit\",\n      \"contains\": \"padding\"\n    },\n    \"view\": {\n      \"stroke\": null\n    }\n  },\n  \"transform\": [\n    {\n      \"calculate\": \"isValid(datum.v) ? format(datum.v, ',') : '—'\",\n      \"as\": \"vt\"\n    }\n  ],\n  \"layer\": [\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 45\"\n        },\n        \"font\": \"Verdana\",\n        \"fontSize\": 18,\n        \"fontWeight\": 800,\n        \"lineHeight\": 22,\n        \"color\": \"#3F3F3F\",\n        \"text\": [\n          \"rows checked\"\n        ]\n      }\n    },\n    {\n      \"mark\": {\n        \"type\": \"text\",\n        \"align\": \"center\",\n        \"baseline\": \"top\",\n        \"x\": {\n          \"expr\": \"width / 2\"\n        },\n        \"y\": {\n          \"expr\": \"height / 2 - 8\"\n        },\n        \"fontSize\": 36,\n        \"fontWeight\": \"bold\",\n        \"color\": {\n          \"expr\": \"mode=='dark'?'#E8EDF5':'#14213A'\"\n        }\n      },\n      \"encoding\": {\n        \"text\": {\n          \"field\": \"vt\"\n        }\n      }\n    }\n  ]\n}",
+                "type": "vega-lite"
+              },
+              "version": 1,
+              "widgetType": "custom-vega-viz"
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "t45_rules",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s4_rules",
+                  "fields": [
+                    {
+                      "name": "what_text",
+                      "expression": "`what_text`"
+                    },
+                    {
+                      "name": "dimension_label",
+                      "expression": "`dimension_label`"
+                    },
+                    {
+                      "name": "criticality_label",
+                      "expression": "`criticality_label`"
+                    },
+                    {
+                      "name": "last_status_text",
+                      "expression": "`last_status_text`"
+                    },
+                    {
+                      "name": "rows_failed",
+                      "expression": "`rows_failed`"
+                    },
+                    {
+                      "name": "failing_since",
+                      "expression": "`failing_since`"
+                    },
+                    {
+                      "name": "rule_name",
+                      "expression": "`rule_name`"
+                    },
+                    {
+                      "name": "checked_columns",
+                      "expression": "`checked_columns`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "displayName": "What we check",
+                    "fieldName": "what_text",
+                    "style": {
+                      "backgroundColor": {
+                        "position": 3,
+                        "themeColorType": "visualizationColors"
+                      },
+                      "fontWeight": 700,
+                      "foregroundColor": {
+                        "themeColorType": "widgetBackgroundColor"
+                      },
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Check type",
+                    "fieldName": "dimension_label",
+                    "headerAlignment": "center"
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Criticality",
+                    "fieldName": "criticality_label",
+                    "headerAlignment": "center"
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Latest status",
+                    "fieldName": "last_status_text",
+                    "headerAlignment": "center",
+                    "style": {
+                      "rules": [
+                        {
+                          "backgroundColor": "#FBE3E1",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Failure"
+                            },
+                            "operator": "contains"
+                          }
+                        },
+                        {
+                          "backgroundColor": "#FDF0D6",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Warning"
+                            },
+                            "operator": "contains"
+                          }
+                        },
+                        {
+                          "backgroundColor": "#ECEEF1",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Did not run"
+                            },
+                            "operator": "contains"
+                          }
+                        },
+                        {
+                          "backgroundColor": "#E2F3E8",
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Pass"
+                            },
+                            "operator": "contains"
+                          }
+                        }
+                      ],
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Rows with errors",
+                    "fieldName": "rows_failed",
+                    "format": {
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "places": 0,
+                        "type": "max"
+                      },
+                      "type": "number-plain"
+                    },
+                    "headerAlignment": "center"
+                  },
+                  {
+                    "contentAlignment": "center",
+                    "displayName": "Failing since",
+                    "fieldName": "failing_since",
+                    "headerAlignment": "center"
+                  },
+                  {
+                    "displayName": "Rule",
+                    "fieldName": "rule_name",
+                    "style": {
+                      "foregroundColor": "#8A8F98",
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "displayName": "Table column checked",
+                    "fieldName": "checked_columns",
+                    "style": {
+                      "foregroundColor": "#8A8F98",
+                      "type": "basic"
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "What is checked on this table and which check has a problem."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">The checks on this table</span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                }
+              },
+              "version": 2,
+              "widgetType": "table"
+            },
+            "specExtensions": {
+              "widgetBackgroundColor": {
+                "light": "#FFFFFF"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "p44_history",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s4_history",
+                  "fields": [
+                    {
+                      "name": "rule_sort",
+                      "expression": "`rule_sort`"
+                    },
+                    {
+                      "name": "dimension_label",
+                      "expression": "`dimension_label`"
+                    },
+                    {
+                      "name": "run_key",
+                      "expression": "`run_key`"
+                    },
+                    {
+                      "name": "max(cell_text)",
+                      "expression": "MAX(`cell_text`)"
+                    },
+                    {
+                      "name": "MAX(cell_tooltip)",
+                      "expression": "MAX(`cell_tooltip`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "rule_sort",
+                          "dimension_label"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "run_key"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`rule_sort`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`dimension_label`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`run_key`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "cells": {
+                  "displayAs": "rows",
+                  "fields": [
+                    {
+                      "actions": {
+                        "hover": {
+                          "tooltipTemplate": "{{ MAX(cell_tooltip) }}",
+                          "type": "tooltip"
+                        }
+                      },
+                      "cellType": "text",
+                      "contentAlignment": "center",
+                      "displayName": "Status",
+                      "fieldName": "max(cell_text)",
+                      "style": {
+                        "rules": [
+                          {
+                            "backgroundColor": "#FBE3E1",
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "Failure"
+                              },
+                              "operator": "contains"
+                            }
+                          },
+                          {
+                            "backgroundColor": "#FDF0D6",
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "Warning"
+                              },
+                              "operator": "contains"
+                            }
+                          },
+                          {
+                            "backgroundColor": "#ECEEF1",
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "Did not run"
+                              },
+                              "operator": "contains"
+                            }
+                          },
+                          {
+                            "backgroundColor": "#E2F3E8",
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "Pass"
+                              },
+                              "operator": "contains"
+                            }
+                          }
+                        ],
+                        "type": "basic"
+                      }
+                    }
+                  ]
+                },
+                "columns": {
+                  "fields": [
+                    {
+                      "displayName": "Run",
+                      "fieldName": "run_key",
+                      "scale": {
+                        "sort": {
+                          "by": "natural-order"
+                        },
+                        "type": "categorical"
+                      }
+                    }
+                  ]
+                },
+                "rows": {
+                  "fields": [
+                    {
+                      "displayName": " ",
+                      "fieldName": "rule_sort",
+                      "headerWidth": 56,
+                      "scale": {
+                        "type": "categorical"
+                      }
+                    },
+                    {
+                      "displayName": "Check type",
+                      "fieldName": "dimension_label",
+                      "scale": {
+                        "type": "categorical"
+                      }
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "Each row is a check, each column a run. Hover over a cell for the description."
+                },
+                "headerAlignment": "center",
+                "showDescription": false,
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">History of each check (last 10 runs)</span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                }
+              },
+              "version": 4,
+              "widgetType": "pivot"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "p46_coverage",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_s4_coverage",
+                  "fields": [
+                    {
+                      "name": "table_label",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "name": "column_label",
+                      "expression": "`column_label`"
+                    },
+                    {
+                      "name": "max(cell_text)",
+                      "expression": "MAX(`cell_text`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "table_label"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "column_label"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`table_label`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`column_label`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "encodings": {
+                "cells": {
+                  "displayAs": "rows",
+                  "fields": [
+                    {
+                      "cellType": "text",
+                      "contentAlignment": "center",
+                      "displayName": "Checks",
+                      "fieldName": "max(cell_text)",
+                      "style": {
+                        "rules": [
+                          {
+                            "backgroundColor": "#FBE3E1",
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "Missing"
+                              },
+                              "operator": "contains"
+                            }
+                          },
+                          {
+                            "backgroundColor": "#FDF0D6",
+                            "condition": {
+                              "operand": {
+                                "type": "data-value",
+                                "value": "Yes"
+                              },
+                              "operator": "contains"
+                            }
+                          }
+                        ],
+                        "type": "basic"
+                      }
+                    }
+                  ],
+                  "hideHeader": true
+                },
+                "columns": {
+                  "fields": [
+                    {
+                      "displayName": "Check type",
+                      "fieldName": "column_label",
+                      "headerStyle": {
+                        "backgroundColor": {
+                          "themeColorType": "canvasBackgroundColor"
+                        },
+                        "fontSize": 12
+                      },
+                      "scale": {
+                        "sort": {
+                          "by": "custom-order",
+                          "orderedValues": [
+                            "Completeness",
+                            "Validity",
+                            "Uniqueness",
+                            "Key not checked"
+                          ]
+                        },
+                        "type": "categorical"
+                      }
+                    }
+                  ]
+                },
+                "rows": {
+                  "fields": [
+                    {
+                      "displayName": "Table",
+                      "fieldName": "table_label",
+                      "headerStyle": {
+                        "backgroundColor": {
+                          "themeColorType": "canvasBackgroundColor"
+                        }
+                      },
+                      "scale": {
+                        "type": "categorical"
+                      }
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "description": {
+                  "fields": [],
+                  "value": "«Missing»: no check of this type. «Key not checked»: key has no uniqueness check."
+                },
+                "showDescription": false,
+                "showTitle": true,
+                "title": {
+                  "fields": [],
+                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">Coverage: what we check on this table</span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                }
+              },
+              "version": 4,
+              "widgetType": "pivot"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#EEF1F5",
+        "dark": "#111A28"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#172131"
+      },
+      "widgetBorderColor": {
+        "light": "#FFFFFF",
+        "dark": "#172131"
+      },
+      "fontColor": {
+        "light": "#1D2530",
+        "dark": "#E6EAEE"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#8ACAFF"
+      },
+      "visualizationColors": [
+        "#2272B4",
+        "#7B5EA7",
+        "#9AA0A6",
+        "#3BA3A3",
+        "#C9780D",
+        "#B45B8C",
+        "#4E6E8E"
+      ],
+      "widgetHeaderAlignment": "CENTER",
+      "textBoxVerticalAlign": "VERTICAL_ALIGN_CENTER",
+      "widgetCornerRadius": 8,
+      "fontSettings": {
+        "base": {
+          "fontFamily": "Inter",
+          "fontColor": {
+            "light": "#14213A",
+            "dark": "#E8EDF5"
+          }
+        }
+      }
+    },
+    "applyModeEnabled": false
+  }
+}

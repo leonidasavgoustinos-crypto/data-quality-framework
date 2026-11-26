@@ -1,0 +1,37 @@
+# =============================================================================
+# TEST - separate test workspace. Deployed by CI as the service principal.
+#
+# TODO before first deploy (see README.md, "First deploy to a new workspace"):
+#   1. workspace.host           -> URL of the test workspace
+#   2. service_principal        -> application ID of the deploy/run service principal
+#   3. warehouse_id lookup      -> name of the SQL warehouse in that workspace
+#   4. notification_email       -> team address
+# All values can also be given at deploy time:  BUNDLE_VAR_<name>=<value>
+# =============================================================================
+targets:
+  test:
+    mode: production
+    workspace:
+      # Host is not a variable (the CLI needs it before variables are resolved).
+      # Set it here, or leave it commented and pass DATABRICKS_HOST from CI.
+      # host: https://<TEST_WORKSPACE_HOST>
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: ${var.service_principal}
+    presets:
+      tags:
+        env: test
+    permissions:
+      - group_name: ${var.owner_group}
+        level: CAN_MANAGE
+      - group_name: ${var.viewer_group}
+        level: CAN_VIEW
+    variables:
+      catalog: analytics_dq_test
+      schema: reporting
+      warehouse_id:
+        lookup:
+          warehouse: "<TEST_SQL_WAREHOUSE_NAME>"
+      deploy_base_views: "true"
+      create_base_tables: "true"
+      schedule_status: UNPAUSED

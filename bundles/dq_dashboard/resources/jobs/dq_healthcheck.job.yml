@@ -1,0 +1,37 @@
+# =============================================================================
+# dq_healthcheck: runs daily to confirm the DQ framework is writing fresh data.
+# Fails (and emails) when no execution has been recorded within freshness_max_days.
+# =============================================================================
+resources:
+  jobs:
+    dq_healthcheck:
+      name: dq_healthcheck
+
+      schedule:
+        quartz_cron_expression: ${var.healthcheck_cron}
+        timezone_id: ${var.timezone}
+        pause_status: ${var.schedule_status}
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      queue:
+        enabled: true
+
+      tasks:
+        - task_key: freshness
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sql_folder.ipynb
+            base_parameters:
+              sql_folder: ../sql/95_health_checks
+              enabled: "true"
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              freshness_max_days: ${var.freshness_max_days}
+          environment_key: serverless
+
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "1"

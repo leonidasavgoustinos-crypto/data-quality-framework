@@ -1,0 +1,129 @@
+# =============================================================================
+# dq_setup: builds everything the dashboard needs, in order.
+# Safe to re-run at any time; no existing data is ever replaced.
+# Tasks are chained; each one calls the generic run_sql_folder runner or the
+# bootstrap notebook, with the folder / enabled switch as a parameter.
+# =============================================================================
+resources:
+  jobs:
+    dq_setup:
+      name: dq_setup
+
+      schedule:
+        quartz_cron_expression: ${var.setup_cron}
+        timezone_id: ${var.timezone}
+        pause_status: ${var.schedule_status}
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      # Serverless compute: no cluster config needed.
+      queue:
+        enabled: true
+
+      tasks:
+        # ------------------------------------------------------------------ #
+        # Task 1: create catalogs and schemas; apply UC grants                #
+        # ------------------------------------------------------------------ #
+        - task_key: bootstrap
+          notebook_task:
+            notebook_path: ../../src/notebooks/bootstrap.ipynb
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_catalog: ${var.source_catalog}
+              results_schema: ${var.results_schema}
+              configuration_schema: ${var.configuration_schema}
+              metadata_schema: ${var.metadata_schema}
+              quarantine_schema: ${var.quarantine_schema}
+              owner_group: ${var.owner_group}
+              viewer_group: ${var.viewer_group}
+              create_catalog: ${var.create_catalog}
+              create_schemas: ${var.create_schemas}
+          environment_key: serverless
+
+        # ------------------------------------------------------------------ #
+        # Task 2: create base tables (IF NOT EXISTS -- never drops data)      #
+        # ------------------------------------------------------------------ #
+        - task_key: base_tables
+          depends_on:
+            - task_key: bootstrap
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sql_folder.ipynb
+            base_parameters:
+              sql_folder: ../sql/10_base_tables
+              enabled: ${var.create_base_tables}
+              source_catalog: ${var.source_catalog}
+              results_schema: ${var.results_schema}
+              configuration_schema: ${var.configuration_schema}
+              metadata_schema: ${var.metadata_schema}
+              quarantine_schema: ${var.quarantine_schema}
+          environment_key: serverless
+
+        # ------------------------------------------------------------------ #
+        # Task 3: (re)create base dashboard views (Eva's views + our copy)   #
+        # Skipped in dev (deploy_base_views=false) to protect the live views. #
+        # ------------------------------------------------------------------ #
+        - task_key: base_views
+          depends_on:
+            - task_key: base_tables
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sql_folder.ipynb
+            base_parameters:
+              sql_folder: ../sql/20_base_views
+              enabled: ${var.deploy_base_views}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_catalog: ${var.source_catalog}
+              results_schema: ${var.results_schema}
+              configuration_schema: ${var.configuration_schema}
+              metadata_schema: ${var.metadata_schema}
+              weight_high: ${var.weight_high}
+              weight_medium: ${var.weight_medium}
+              weight_low: ${var.weight_low}
+              weight_default: ${var.weight_default}
+              score_k_shrink: ${var.score_k_shrink}
+              score_stale_factor: ${var.score_stale_factor}
+              score_interval_window_days: ${var.score_interval_window_days}
+              score_min_days_for_interval: ${var.score_min_days_for_interval}
+              score_warning_penalty: ${var.score_warning_penalty}
+          environment_key: serverless
+
+        # ------------------------------------------------------------------ #
+        # Task 4: (re)create extension views (_ext)                           #
+        # ------------------------------------------------------------------ #
+        - task_key: ext_views
+          depends_on:
+            - task_key: base_views
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sql_folder.ipynb
+            base_parameters:
+              sql_folder: ../sql/30_ext_views
+              enabled: ${var.deploy_ext_views}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              source_catalog: ${var.source_catalog}
+              configuration_schema: ${var.configuration_schema}
+              metadata_schema: ${var.metadata_schema}
+          environment_key: serverless
+
+        # ------------------------------------------------------------------ #
+        # Task 5: smoke tests                                                 #
+        # ------------------------------------------------------------------ #
+        - task_key: smoke_tests
+          depends_on:
+            - task_key: ext_views
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sql_folder.ipynb
+            base_parameters:
+              sql_folder: ../sql/90_smoke_tests
+              enabled: ${var.run_smoke_tests}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          environment_key: serverless
+
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "1"
