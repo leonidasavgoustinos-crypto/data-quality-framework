@@ -54,8 +54,6 @@
         "    LEFT JOIN res r\n",
         "      ON r.run_date = d.run_date\n",
         "      AND r.status = s.status\n",
-        "WHERE\n",
-        "  s.status <> 'pass'\n",
         "GROUP BY\n",
         "  ALL\n",
         "ORDER BY\n",
@@ -127,8 +125,6 @@
         "    LEFT JOIN res r\n",
         "      ON r.project_label = a.project_label\n",
         "      AND r.status = s.status\n",
-        "WHERE\n",
-        "  s.status <> 'pass'\n",
         "GROUP BY\n",
         "  ALL\n",
         "ORDER BY\n",
@@ -216,7 +212,7 @@
         "FROM\n",
         "  m CROSS JOIN v_simple_status s\n",
         "WHERE\n",
-        "  s.status IN ('error', 'warning')\n",
+        "  s.status IN ('error', 'warning', 'pass')\n",
         "GROUP BY\n",
         "  m.run_month,\n",
         "  s.status_label,\n",
@@ -354,7 +350,9 @@
         "  t.project_label,\n",
         "  t.status_label,\n",
         "  t.status_order,\n",
-        "  COALESCE(t.rows_failed, 0) AS rows_failed\n",
+        "  COALESCE(t.rows_failed, 0) AS rows_failed,\n",
+        "  t.rows_evaluated,\n",
+        "  t.rows_failed / NULLIF(t.rows_evaluated, 0) AS failed_share\n",
         "FROM\n",
         "  v_simple_table_daily t\n",
         "    JOIN days d\n",
@@ -362,6 +360,7 @@
         "WHERE\n",
         "  COALESCE(t.rows_failed, 0) > 0\n",
         "ORDER BY\n",
+        "  failed_share DESC,\n",
         "  rows_failed DESC,\n",
         "  t.status_order,\n",
         "  t.table_label\n",
@@ -1495,79 +1494,81 @@
               }
             ],
             "spec": {
-              "data": {
-                "queryName": "main_query"
+              "frame": {
+                "showTitle": true,
+                "showDescription": false,
+                "title": "Results per day (last 30 days)",
+                "description": {
+                  "value": "Share of each status per day (100% = all checks, including those that did not run). A gap means no check ran that day.",
+                  "fields": []
+                }
               },
+              "version": 3,
+              "mark": {
+                "layout": "percent-stack"
+              },
+              "widgetType": "bar",
               "encodings": {
-                "color": {
-                  "displayName": "Status",
-                  "fieldName": "status_label",
-                  "scale": {
-                    "mappings": [
-                      {
-                        "color": "#D64545",
-                        "value": "Failure"
-                      },
-                      {
-                        "color": "#E3A033",
-                        "value": "Warning"
-                      },
-                      {
-                        "color": "#8A8F98",
-                        "value": "Did not run"
-                      }
-                    ],
-                    "sort": {
-                      "by": "custom-order",
-                      "orderedValues": [
-                        "Failure",
-                        "Warning",
-                        "Did not run"
-                      ]
-                    },
-                    "type": "categorical"
-                  }
-                },
                 "x": {
-                  "displayName": "Day",
                   "fieldName": "daily(run_day)",
+                  "displayName": "Day",
                   "scale": {
                     "type": "temporal"
                   }
                 },
                 "y": {
-                  "displayName": "Checks",
                   "fieldName": "sum(result_count)",
                   "format": {
+                    "type": "number-plain",
                     "abbreviation": "none",
                     "decimalPlaces": {
-                      "places": 0,
-                      "type": "max"
-                    },
-                    "type": "number-plain"
+                      "type": "max",
+                      "places": 0
+                    }
                   },
+                  "displayName": "Checks",
                   "scale": {
                     "type": "quantitative"
                   }
-                }
-              },
-              "frame": {
-                "description": {
-                  "fields": [],
-                  "value": "Each day's problems. A gap means no check ran that day."
                 },
-                "showDescription": false,
-                "showTitle": true,
-                "title": {
-                  "fields": [],
-                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">Warnings and failures per day </span>\n\n### <span style=\"text-align:center;display:block\"><span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">(last 30 days)</span></span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                "color": {
+                  "fieldName": "status_label",
+                  "displayName": "Status",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Failure",
+                        "Warning",
+                        "Did not run",
+                        "Pass"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "Failure",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "Warning",
+                        "color": "#E3A033"
+                      },
+                      {
+                        "value": "Did not run",
+                        "color": "#8A8F98"
+                      },
+                      {
+                        "value": "Pass",
+                        "color": "#2E8B57"
+                      }
+                    ]
+                  }
                 }
               },
-              "mark": {
-                "layout": "stack"
-              },
-              "version": 3,
-              "widgetType": "bar"
+              "data": {
+                "queryName": "main_query"
+              }
             }
           },
           "position": {
@@ -1604,69 +1605,78 @@
               }
             ],
             "spec": {
-              "data": {
-                "queryName": "main_query"
+              "frame": {
+                "showTitle": true,
+                "showDescription": false,
+                "title": "Monthly pass, warning and failure rates (since the start)",
+                "description": {
+                  "value": "The share of passes, warnings and failures each month.",
+                  "fields": []
+                }
               },
+              "version": 3,
+              "widgetType": "line",
               "encodings": {
-                "color": {
-                  "displayName": "Status",
-                  "fieldName": "series_label",
-                  "scale": {
-                    "mappings": [
-                      {
-                        "color": "#E3A033",
-                        "value": "Warning"
-                      },
-                      {
-                        "color": "#D64545",
-                        "value": "Failure"
-                      }
-                    ],
-                    "type": "categorical"
-                  }
-                },
-                "label": {
-                  "display": {
-                    "type": "x-max"
-                  },
-                  "show": true
-                },
                 "x": {
-                  "displayName": "Month",
                   "fieldName": "monthly(run_month)",
+                  "displayName": "Month",
                   "scale": {
                     "type": "temporal"
                   }
                 },
                 "y": {
-                  "displayName": "Share",
                   "fieldName": "max(share)",
                   "format": {
+                    "type": "number-percent",
                     "decimalPlaces": {
-                      "places": 1,
-                      "type": "exact"
-                    },
-                    "type": "number-percent"
+                      "type": "exact",
+                      "places": 1
+                    }
                   },
+                  "displayName": "Checks that ran",
                   "scale": {
                     "type": "quantitative"
                   }
-                }
-              },
-              "frame": {
-                "description": {
-                  "fields": [],
-                  "value": "Share of warnings and failures each month. Lower is better."
                 },
-                "showDescription": false,
-                "showTitle": true,
-                "title": {
-                  "fields": [],
-                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">% warnings and % failures </span>\n\n### <span style=\"text-align:center;display:block\"><span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">per month (since the start)</span></span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                "color": {
+                  "fieldName": "series_label",
+                  "displayName": "Status",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Failure",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "Warning",
+                        "color": "#E3A033"
+                      },
+                      {
+                        "value": "Pass",
+                        "color": "#2E8B57"
+                      }
+                    ],
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Failure",
+                        "Warning",
+                        "Pass"
+                      ]
+                    }
+                  }
+                },
+                "label": {
+                  "show": true,
+                  "display": {
+                    "type": "x-max"
+                  }
                 }
               },
-              "version": 3,
-              "widgetType": "line"
+              "data": {
+                "queryName": "main_query"
+              }
             }
           },
           "position": {
@@ -2314,8 +2324,8 @@
                       "expression": "`table_label`"
                     },
                     {
-                      "name": "sum(rows_failed)",
-                      "expression": "SUM(`rows_failed`)"
+                      "name": "sum(failed_share)",
+                      "expression": "SUM(`failed_share`)"
                     }
                   ],
                   "disaggregated": false
@@ -2323,76 +2333,71 @@
               }
             ],
             "spec": {
-              "data": {
-                "queryName": "main_query"
-              },
-              "encodings": {
-                "color": {
-                  "displayName": "Status",
-                  "fieldName": "status_label",
-                  "scale": {
-                    "mappings": [
-                      {
-                        "color": "#D64545",
-                        "value": "Failure"
-                      },
-                      {
-                        "color": "#E3A033",
-                        "value": "Warning"
-                      },
-                      {
-                        "color": "#8A8F98",
-                        "value": "Did not run"
-                      },
-                      {
-                        "color": "#2E8B57",
-                        "value": "Pass"
-                      }
-                    ],
-                    "type": "categorical"
-                  }
-                },
-                "x": {
-                  "displayName": "Table",
-                  "fieldName": "table_label",
-                  "scale": {
-                    "sort": {
-                      "by": "y-reversed"
-                    },
-                    "type": "categorical"
-                  }
-                },
-                "y": {
-                  "displayName": "Rows with errors",
-                  "fieldName": "sum(rows_failed)",
-                  "format": {
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "places": 0,
-                      "type": "max"
-                    },
-                    "hideGroupSeparator": false,
-                    "type": "number-plain"
-                  },
-                  "scale": {
-                    "type": "quantitative"
-                  }
-                }
-              },
               "frame": {
-                "description": {
-                  "fields": [],
-                  "value": "Rows with errors, per table. Right-click a bar to open the table."
-                },
-                "showDescription": false,
                 "showTitle": true,
-                "title": {
-                  "fields": [],
-                  "value": "<p>&nbsp;</p>\n\n### <span style=\"font-size:18px;font-weight:800;font-family:Verdana;text-decoration:underline;color:#3F3F3F\">Rows with errors per table (top 5)</span>\n<p>&nbsp;</p>\n\n<p>&nbsp;</p>\n"
+                "showDescription": false,
+                "title": "Share of rows with errors per table (top 5)",
+                "description": {
+                  "value": "Share of the table's checked rows that have errors, in the latest run. Right-click a bar to open the table.",
+                  "fields": []
                 }
               },
               "version": 3,
-              "widgetType": "bar"
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "table_label",
+                  "displayName": "Table",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(failed_share)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "displayName": "% of rows with errors",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "status_label",
+                  "displayName": "Status",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Failure",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "Warning",
+                        "color": "#E3A033"
+                      },
+                      {
+                        "value": "Did not run",
+                        "color": "#8A8F98"
+                      },
+                      {
+                        "value": "Pass",
+                        "color": "#2E8B57"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
             }
           },
           "position": {
@@ -2433,85 +2438,90 @@
               }
             ],
             "spec": {
-              "data": {
-                "queryName": "main_query"
+              "frame": {
+                "showTitle": true,
+                "showDescription": false,
+                "title": "Results per area",
+                "description": {
+                  "value": "Share of each status in the latest run per area (100% = all checks, including those that did not run). Right-click to open the area.",
+                  "fields": []
+                }
               },
+              "version": 3,
+              "mark": {
+                "layout": "percent-stack"
+              },
+              "widgetType": "bar",
               "encodings": {
-                "color": {
-                  "displayName": "Status",
-                  "fieldName": "status_label",
-                  "scale": {
-                    "mappings": [
-                      {
-                        "color": "#D64545",
-                        "value": "Failure"
-                      },
-                      {
-                        "color": "#E3A033",
-                        "value": "Warning"
-                      },
-                      {
-                        "color": "#8A8F98",
-                        "value": "Did not run"
-                      }
-                    ],
-                    "sort": {
-                      "by": "custom-order",
-                      "orderedValues": [
-                        "Failure",
-                        "Warning",
-                        "Did not run"
-                      ]
-                    },
-                    "type": "categorical"
-                  }
-                },
-                "extra": [
-                  {
-                    "displayName": "Passed",
-                    "fieldName": "max(pass_count)"
-                  }
-                ],
                 "x": {
-                  "displayName": "Checks",
                   "fieldName": "sum(result_count)",
                   "format": {
+                    "type": "number-plain",
                     "abbreviation": "none",
                     "decimalPlaces": {
-                      "places": 0,
-                      "type": "max"
-                    },
-                    "type": "number-plain"
+                      "type": "max",
+                      "places": 0
+                    }
                   },
+                  "displayName": "Checks",
                   "scale": {
                     "type": "quantitative"
                   }
                 },
                 "y": {
-                  "displayName": "Project",
                   "fieldName": "project_label",
+                  "displayName": "Area",
                   "scale": {
+                    "type": "categorical",
                     "sort": {
                       "by": "x-reversed"
-                    },
-                    "type": "categorical"
+                    }
                   }
-                }
-              },
-              "frame": {
-                "description": {
-                  "fields": [],
-                  "value": "Where today's problems are. Passes are not drawn. Right-click to open the project."
                 },
-                "showDescription": false,
-                "showTitle": true,
-                "title": "Results per project"
+                "color": {
+                  "fieldName": "status_label",
+                  "displayName": "Status",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Failure",
+                        "Warning",
+                        "Did not run",
+                        "Pass"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "Failure",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "Warning",
+                        "color": "#E3A033"
+                      },
+                      {
+                        "value": "Did not run",
+                        "color": "#8A8F98"
+                      },
+                      {
+                        "value": "Pass",
+                        "color": "#2E8B57"
+                      }
+                    ]
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "max(pass_count)",
+                    "displayName": "Passed"
+                  }
+                ]
               },
-              "mark": {
-                "layout": "stack"
-              },
-              "version": 3,
-              "widgetType": "bar"
+              "data": {
+                "queryName": "main_query"
+              }
             }
           },
           "position": {
@@ -2928,94 +2938,94 @@
               }
             ],
             "spec": {
-              "data": {
-                "queryName": "main_query"
+              "frame": {
+                "showTitle": true,
+                "showDescription": false,
+                "title": "Results per day (30 days)",
+                "description": {
+                  "value": "As on the «Overview» page, only for this project: share of each status per day (100% = all checks, including those that did not run).",
+                  "fields": []
+                }
               },
+              "version": 3,
+              "mark": {
+                "layout": "percent-stack"
+              },
+              "widgetType": "bar",
               "encodings": {
-                "color": {
-                  "displayName": "Status",
-                  "fieldName": "status_label",
-                  "scale": {
-                    "mappings": [
-                      {
-                        "color": "#2E8B57",
-                        "value": "Pass"
-                      },
-                      {
-                        "color": "#D64545",
-                        "value": "Failure"
-                      },
-                      {
-                        "color": "#E3A033",
-                        "value": "Warning"
-                      },
-                      {
-                        "color": "#8A8F98",
-                        "value": "Did not run"
-                      }
-                    ],
-                    "sort": {
-                      "by": "custom-order",
-                      "orderedValues": [
-                        "Pass",
-                        "Warning",
-                        "Failure",
-                        "Did not run"
-                      ]
-                    },
-                    "type": "categorical"
-                  }
-                },
-                "extra": [
-                  {
-                    "displayName": "% of the day",
-                    "fieldName": "sum(result_pct)",
-                    "format": {
-                      "decimalPlaces": {
-                        "places": 1,
-                        "type": "exact"
-                      },
-                      "type": "number-percent"
-                    }
-                  }
-                ],
                 "x": {
-                  "displayName": "Day",
                   "fieldName": "daily(run_day)",
+                  "displayName": "Day",
                   "scale": {
                     "type": "temporal"
                   }
                 },
                 "y": {
-                  "displayName": "Checks",
                   "fieldName": "sum(result_count)",
                   "format": {
+                    "type": "number-plain",
                     "abbreviation": "none",
                     "decimalPlaces": {
-                      "places": 0,
-                      "type": "max"
-                    },
-                    "type": "number-plain"
+                      "type": "max",
+                      "places": 0
+                    }
                   },
+                  "displayName": "Checks",
                   "scale": {
                     "type": "quantitative"
                   }
-                }
-              },
-              "frame": {
-                "description": {
-                  "fields": [],
-                  "value": "Results per day for this project. Hover a segment for the count and % of that day's checks."
                 },
-                "showDescription": false,
-                "showTitle": true,
-                "title": "Successes, warnings and failures per day (30 days)"
+                "color": {
+                  "fieldName": "status_label",
+                  "displayName": "Status",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Failure",
+                        "Warning",
+                        "Did not run",
+                        "Pass"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "Failure",
+                        "color": "#D64545"
+                      },
+                      {
+                        "value": "Warning",
+                        "color": "#E3A033"
+                      },
+                      {
+                        "value": "Did not run",
+                        "color": "#8A8F98"
+                      },
+                      {
+                        "value": "Pass",
+                        "color": "#2E8B57"
+                      }
+                    ]
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "sum(result_pct)",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 1
+                      }
+                    },
+                    "displayName": "% of the day"
+                  }
+                ]
               },
-              "mark": {
-                "layout": "stack"
-              },
-              "version": 3,
-              "widgetType": "bar"
+              "data": {
+                "queryName": "main_query"
+              }
             }
           },
           "position": {
