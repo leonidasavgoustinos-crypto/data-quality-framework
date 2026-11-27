@@ -3,11 +3,16 @@
 # Safe to re-run at any time; no existing data is ever replaced.
 # Tasks are chained; each one calls the generic run_sql_folder runner or the
 # bootstrap notebook, with the folder / enabled switch as a parameter.
+# The weekly schedule rebuilds the views and re-applies grants (drift correction): manual changes to views are undone.
 # =============================================================================
 resources:
   jobs:
     dq_setup:
       name: dq_setup
+
+      permissions:
+        - group_name: ${var.viewer_group}
+          level: CAN_VIEW
 
       schedule:
         quartz_cron_expression: ${var.setup_cron}
@@ -38,7 +43,7 @@ resources:
               metadata_schema: ${var.metadata_schema}
               quarantine_schema: ${var.quarantine_schema}
               owner_group: ${var.owner_group}
-              viewer_group: ${var.viewer_group}
+              uc_viewer_group: ${var.uc_viewer_group}
               create_catalog: ${var.create_catalog}
               create_schemas: ${var.create_schemas}
           environment_key: serverless
@@ -62,8 +67,8 @@ resources:
           environment_key: serverless
 
         # ------------------------------------------------------------------ #
-        # Task 3: (re)create base dashboard views (Eva's views + our copy)   #
-        # Skipped in dev (deploy_base_views=false) to protect the live views. #
+        # Task 3: (re)create base dashboard views                             #
+        # Switch: deploy_base_views.                                          #
         # ------------------------------------------------------------------ #
         - task_key: base_views
           depends_on:

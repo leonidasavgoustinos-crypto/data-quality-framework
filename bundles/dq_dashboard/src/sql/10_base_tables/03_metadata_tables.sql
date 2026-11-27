@@ -1,7 +1,7 @@
 -- DQ framework metadata tables. Same columns as setup/01_ddl, but IF NOT EXISTS:
 -- existing tables (and their data) are never replaced.
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${metadata_schema}.`table` (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${metadata_schema}`.`table` (
   table_id          BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   table_nk          STRING GENERATED ALWAYS AS (concat(`catalog`, '.', `schema`, '.', `table`)),
   quarantine        STRING GENERATED ALWAYS AS (concat('${source_catalog}', '.', '${quarantine_schema}', '.', `schema`, '_', `table`)),
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${metadata_schema}.`table` (
 USING DELTA
 COMMENT 'Platform tables with metadata information about primary keys, layer, schema, catalog etc.';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${metadata_schema}.rule_type (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${metadata_schema}`.rule_type (
   rule_type_id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   rule_type_nk STRING GENERATED ALWAYS AS (rule_type),
   rule_type    STRING,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${metadata_schema}.rule_type (
 USING DELTA
 COMMENT 'Business or Technical rule';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${metadata_schema}.rule_dimension (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${metadata_schema}`.rule_dimension (
   rule_dimension_id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   rule_dimension_nk STRING GENERATED ALWAYS AS (rule_dimension),
   rule_dimension    STRING,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${metadata_schema}.rule_dimension (
 USING DELTA
 COMMENT 'Data quality dimensions to be used (e.g completeness, uniqueness, validity, consistency)';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${metadata_schema}.`project` (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${metadata_schema}`.`project` (
   project_id          BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   `project`           STRING,
   project_nk          STRING GENERATED ALWAYS AS (`project`),

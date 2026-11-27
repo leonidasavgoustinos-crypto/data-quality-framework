@@ -7,4 +7,4 @@ SELECT CASE
            THEN raise_error('Newest DQ execution is ' || DATEDIFF(current_date(), MAX(run_date)) || ' days old (limit ${freshness_max_days})')
          ELSE 'ok'
        END AS freshness
-FROM ${catalog}.${schema}.v_simple_executions;
+FROM `${catalog}`.`${schema}`.v_simple_executions;

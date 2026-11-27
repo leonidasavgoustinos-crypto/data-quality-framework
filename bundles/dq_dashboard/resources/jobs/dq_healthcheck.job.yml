@@ -7,6 +7,10 @@ resources:
     dq_healthcheck:
       name: dq_healthcheck
 
+      permissions:
+        - group_name: ${var.viewer_group}
+          level: CAN_VIEW
+
       schedule:
         quartz_cron_expression: ${var.healthcheck_cron}
         timezone_id: ${var.timezone}

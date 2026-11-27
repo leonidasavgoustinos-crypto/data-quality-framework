@@ -1,6 +1,6 @@
--- Owner: eva.routsi@ms.d-one.ai. Copied from the live view analytics_dq_dev.reporting.v_simple_table_daily on 2026-11-26 (source of truth).
+-- Base view definition, agreed on 2026-11-26. Every deploy builds its own copy in its reporting schema.
 -- Grain: one row per table_label, project_label and run day; worst_status = worst rule status of the day.
-CREATE OR REPLACE VIEW ${catalog}.${schema}.v_simple_table_daily AS
+CREATE OR REPLACE VIEW `${catalog}`.`${schema}`.v_simple_table_daily AS
 WITH daily AS (
   SELECT
     CASE WHEN COUNT(DISTINCT r.table_id) = 1 AND COUNT(r.table_id) = COUNT(*)
@@ -11,7 +11,7 @@ WITH daily AS (
     MIN(r.status_order)   AS status_order,
     SUM(r.rows_failed)    AS rows_failed,
     MAX(r.rows_evaluated) AS rows_evaluated
-  FROM ${catalog}.${schema}.v_simple_results r
+  FROM `${catalog}`.`${schema}`.v_simple_results r
   WHERE r.is_latest_for_day
     AND r.status_label IS NOT NULL
   GROUP BY r.table_label, r.project_label, r.run_date
@@ -24,7 +24,7 @@ marked AS (
     s.status_symbol,
     s.status = 'pass'   AS is_pass
   FROM daily d
-  JOIN ${catalog}.${schema}.v_simple_status s
+  JOIN `${catalog}`.`${schema}`.v_simple_status s
     ON s.status_order = d.status_order
 ),
 streaks AS (

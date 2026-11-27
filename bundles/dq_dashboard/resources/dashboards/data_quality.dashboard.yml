@@ -5,7 +5,7 @@ resources:
       warehouse_id: ${var.warehouse_id}
       dataset_catalog: ${var.catalog}
       dataset_schema: ${var.schema}
-      file_path: ../../src/dashboards/data_quality.lvdash.json
+      file_path: ../../build/data_quality.lvdash.json
       embed_credentials: false
       permissions:
         - group_name: ${var.owner_group}

@@ -1,7 +1,7 @@
 -- DQ framework configuration tables. Same columns as setup/01_ddl, but IF NOT EXISTS:
 -- existing tables (and their data) are never replaced.
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${configuration_schema}.apply_at (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${configuration_schema}`.apply_at (
   apply_at_id         BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   apply_at            STRING,
   apply_at_nk         STRING GENERATED ALWAYS AS (CONCAT(apply_at, '.', CASE WHEN is_project_specific = TRUE THEN 'project_specific' ELSE 'project_agnostic' END)),
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${configuration_schema}.apply_at (
 USING DELTA
 COMMENT 'Specifies the Medallion Architecture layer where the data processing is applied.';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${configuration_schema}.rule_assignment (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${configuration_schema}`.rule_assignment (
   rule_assignment_id     BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   rule_template_id       BIGINT,
   template_nk            STRING,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${configuration_schema}.rule_assign
 USING DELTA
 COMMENT 'Configures a rule template for a specific dataset/column, defining parameters and if needed, target dataset/column information for comparison';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${configuration_schema}.run_policy (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${configuration_schema}`.run_policy (
   policy_id   BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   criticality STRING,
   quarantine  BOOLEAN,
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${configuration_schema}.run_policy 
 USING DELTA
 COMMENT 'Defines execution behavior for violations per criticality level, including fail-fast vs quarantine and alert strategy';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${configuration_schema}.rule_template (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${configuration_schema}`.rule_template (
   rule_template_id  BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1),
   name              STRING,
   description       STRING,

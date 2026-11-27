@@ -2,7 +2,7 @@
 -- existing tables (and their data) are never replaced.
 -- Placeholders ${...} are filled by src/notebooks/run_sql_folder from job parameters.
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${results_schema}.result (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${results_schema}`.result (
   result_id        STRING,
   project_id       BIGINT,
   status           STRING,
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${results_schema}.result (
 USING DELTA
 COMMENT 'High level result per execution of the DQ framework, to be used by the orchestrator';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${results_schema}.result_rule (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${results_schema}`.result_rule (
   result_rule_id     STRING,
   result_table_id    STRING,
   result_id          STRING,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS ${source_catalog}.${results_schema}.result_rule (
 USING DELTA
 COMMENT 'Data quality results on rule level';
 
-CREATE TABLE IF NOT EXISTS ${source_catalog}.${results_schema}.result_table (
+CREATE TABLE IF NOT EXISTS `${source_catalog}`.`${results_schema}`.result_table (
   result_table_id STRING,
   result_id       STRING,
   table_id        BIGINT,

@@ -1,6 +1,7 @@
 # =============================================================================
-# DEV - development workspace. Each developer deploys an own, prefixed copy
-# ("[dev <user>] ...") under their home folder; schedules are paused.
+# DEV - development workspace. Each developer deploys an own, prefixed copy of
+# the dashboard and jobs ("[dev <user>] ...") under their home folder and an
+# own reporting schema reporting_<user>; schedules are paused.
 # =============================================================================
 targets:
   dev:
@@ -13,13 +14,13 @@ targets:
         env: dev
     variables:
       catalog: analytics_dq_dev
-      schema: reporting
+      # One reporting schema per developer: each dev deploy builds its own views.
+      schema: reporting_${workspace.current_user.short_name}
       warehouse_id:
         lookup:
           warehouse: brickbybrickWH
-      # In dev the base views are maintained by hand by their owner
-      # (eva.routsi@ms.d-one.ai). dq_setup must never replace them here.
-      deploy_base_views: "false"
+      deploy_base_views: "true"
       create_base_tables: "true"
-      notification_email: apostolos.rigas@ms.d-one.ai
+      # Failure emails go to the developer who deployed.
+      notification_email: ${workspace.current_user.userName}
       schedule_status: PAUSED

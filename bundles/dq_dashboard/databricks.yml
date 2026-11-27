@@ -9,13 +9,13 @@
 #   resources/**.yml      -> one file per resource (dashboard, jobs)
 #   src/                  -> dashboard JSON, SQL files, generic runner notebooks
 #
-# Deploy:  ./scripts/deploy.sh <target>   (validate -> deploy -> run dq_setup)
+# Deploy:  ./scripts/deploy.sh <target>   (render -> validate -> deploy -> run dq_setup)
 # =============================================================================
 
 bundle:
   name: dq_dashboard
-  # Uncomment to pin the CLI version used by every developer / CI runner.
-  # databricks_cli_version: ">= 0.281.0"
+  # Pins the CLI version used by every developer / CI runner.
+  databricks_cli_version: ">= 0.281.0"
 
 include:
   - targets/*.yml
@@ -26,6 +26,7 @@ sync:
   exclude:
     - scripts/**
     - ci/**
+    - build/**
 
 # -----------------------------------------------------------------------------
 # Variables. Every environment-specific or business value is declared here with
@@ -73,7 +74,7 @@ variables:
     description: Create the framework base tables if they do not exist (never replaces existing tables).
     default: "true"
   deploy_base_views:
-    description: (Re)create the base dashboard views (v_simple_status ... v_simple_coverage). Off in dev, where the owner maintains them by hand.
+    description: (Re)create the base dashboard views (v_simple_status ... v_simple_coverage). Set "false" only if someone maintains the views of this reporting schema by hand.
     default: "true"
   deploy_ext_views:
     description: (Re)create the extension views (v_simple_*_ext).
@@ -84,11 +85,14 @@ variables:
 
   # ---- Access -------------------------------------------------------------------
   owner_group:
-    description: Group that manages the bundle resources and owns the data objects (CAN_MANAGE / ALL PRIVILEGES on the schema).
+    description: Group that manages the bundle resources and owns the data objects (CAN_MANAGE / ALL PRIVILEGES on the schema). Must be an account group.
     default: dq-framework-admins
   viewer_group:
-    description: Group that can open the dashboard and read the views (CAN_RUN / SELECT).
+    description: Workspace group that can open the dashboard (CAN_RUN) and see the jobs (CAN_VIEW). Workspace permissions only.
     default: users
+  uc_viewer_group:
+    description: Account-level group that gets USE CATALOG, USE SCHEMA and SELECT on the reporting schema. Must be an account group (workspace-local groups like "users" cannot receive Unity Catalog grants).
+    default: account users
   service_principal:
     description: Application ID of the service principal that runs jobs in test / prod.
     default: "<SERVICE_PRINCIPAL_APPLICATION_ID>"

@@ -1,13 +1,12 @@
 # =============================================================================
 # CI pipeline for the dq_dashboard bundle.
-# Trigger: push to feature/* -> test; push to main -> test + prod.
+# Trigger: push to feature/* -> validate only; push to main -> validate + test + prod.
 #
-# Required pipeline variables (set in Azure DevOps, not in YAML):
-#   DATABRICKS_TOKEN_TEST  - PAT or SP OAuth token for the test workspace
-#   DATABRICKS_TOKEN_PROD  - PAT or SP OAuth token for the prod workspace
-#   DATABRICKS_HOST_TEST   - e.g. https://adb-xxx.azuredatabricks.net
-#   DATABRICKS_HOST_PROD   - e.g. https://adb-yyy.azuredatabricks.net
-#   DQ_NOTIFICATION_EMAIL  - team address for alerts
+# Required pipeline variables (set in Azure DevOps, not in YAML; mark secrets as secret):
+#   DATABRICKS_HOST_TEST, DATABRICKS_HOST_PROD                     - workspace URLs
+#   DATABRICKS_CLIENT_ID_TEST, DATABRICKS_CLIENT_ID_PROD           - service principal application ID
+#   DATABRICKS_CLIENT_SECRET_TEST, DATABRICKS_CLIENT_SECRET_PROD   - service principal OAuth secret
+#   DQ_NOTIFICATION_EMAIL                                          - team address for alerts
 # =============================================================================
 trigger:
   branches:
@@ -17,6 +16,7 @@ trigger:
 
 variables:
   BUNDLE_ROOT: bundles/dq_dashboard
+  CLI_VERSION: v0.281.0   # keep in line with databricks_cli_version in databricks.yml
 
 pool:
   vmImage: ubuntu-latest
@@ -30,36 +30,40 @@ stages:
     jobs:
       - job: validate
         steps:
-          - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sudo sh
+          - checkout: self
+          - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/$(CLI_VERSION)/install.sh | sudo sh
             displayName: Install Databricks CLI
           - script: |
-              cd $(BUNDLE_ROOT)
               DATABRICKS_HOST=$(DATABRICKS_HOST_TEST) \
-              DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_TEST) \
-              databricks bundle validate --target test
+              DATABRICKS_CLIENT_ID=$(DATABRICKS_CLIENT_ID_TEST) \
+              DATABRICKS_CLIENT_SECRET=$(DATABRICKS_CLIENT_SECRET_TEST) \
+              VALIDATE_ONLY=1 \
+              bash $(BUNDLE_ROOT)/scripts/deploy.sh test
             displayName: Validate target=test
 
   # ------------------------------------------------------------------ #
-  # Stage 2: deploy to test (all branches)                               #
+  # Stage 2: deploy to test (main only)                                  #
   # ------------------------------------------------------------------ #
   - stage: deploy_test
     displayName: Deploy to test
     dependsOn: validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
     jobs:
       - job: deploy_test
         steps:
-          - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sudo sh
+          - checkout: self
+          - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/$(CLI_VERSION)/install.sh | sudo sh
             displayName: Install Databricks CLI
           - script: |
-              cd $(BUNDLE_ROOT)
               DATABRICKS_HOST=$(DATABRICKS_HOST_TEST) \
-              DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_TEST) \
+              DATABRICKS_CLIENT_ID=$(DATABRICKS_CLIENT_ID_TEST) \
+              DATABRICKS_CLIENT_SECRET=$(DATABRICKS_CLIENT_SECRET_TEST) \
               BUNDLE_VAR_notification_email=$(DQ_NOTIFICATION_EMAIL) \
-              bash scripts/deploy.sh test
+              bash $(BUNDLE_ROOT)/scripts/deploy.sh test
             displayName: Deploy and run dq_setup on test
 
   # ------------------------------------------------------------------ #
-  # Stage 3: deploy to prod (main branch only)                           #
+  # Stage 3: deploy to prod (main only, after test)                      #
   # ------------------------------------------------------------------ #
   - stage: deploy_prod
     displayName: Deploy to prod
@@ -72,12 +76,14 @@ stages:
           runOnce:
             deploy:
               steps:
-                - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sudo sh
+                # Deployment jobs do not check out the repository by themselves.
+                - checkout: self
+                - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/$(CLI_VERSION)/install.sh | sudo sh
                   displayName: Install Databricks CLI
                 - script: |
-                    cd $(BUNDLE_ROOT)
                     DATABRICKS_HOST=$(DATABRICKS_HOST_PROD) \
-                    DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_PROD) \
+                    DATABRICKS_CLIENT_ID=$(DATABRICKS_CLIENT_ID_PROD) \
+                    DATABRICKS_CLIENT_SECRET=$(DATABRICKS_CLIENT_SECRET_PROD) \
                     BUNDLE_VAR_notification_email=$(DQ_NOTIFICATION_EMAIL) \
-                    bash scripts/deploy.sh prod
+                    bash $(BUNDLE_ROOT)/scripts/deploy.sh prod
                   displayName: Deploy and run dq_setup on prod

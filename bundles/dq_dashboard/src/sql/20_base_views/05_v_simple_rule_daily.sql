@@ -1,6 +1,6 @@
--- Owner: eva.routsi@ms.d-one.ai. Copied from the live view analytics_dq_dev.reporting.v_simple_rule_daily on 2026-11-26 (source of truth).
+-- Base view definition, agreed on 2026-11-26. Every deploy builds its own copy in its reporting schema.
 -- Grain: one row per rule_key (rule assignment, or result_rule_id when there is no assignment) and run day.
-CREATE OR REPLACE VIEW ${catalog}.${schema}.v_simple_rule_daily AS
+CREATE OR REPLACE VIEW `${catalog}`.`${schema}`.v_simple_rule_daily AS
 WITH daily AS (
   SELECT
     COALESCE(CAST(r.rule_assignment_id AS STRING), r.result_rule_id) AS rule_key,
@@ -28,7 +28,7 @@ WITH daily AS (
       WHEN r.status = 'pass'                THEN 'pass'
       ELSE 'code_error'
     END                                                              AS state
-  FROM ${catalog}.${schema}.v_simple_results r
+  FROM `${catalog}`.`${schema}`.v_simple_results r
   WHERE r.is_latest_for_day
     AND r.result_rule_id IS NOT NULL
     AND r.status_label IS NOT NULL

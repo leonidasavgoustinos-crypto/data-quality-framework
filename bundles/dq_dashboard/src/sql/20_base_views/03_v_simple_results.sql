@@ -1,7 +1,7 @@
--- Owner: eva.routsi@ms.d-one.ai. Copied from the live view analytics_dq_dev.reporting.v_simple_results on 2026-11-26 (source of truth).
+-- Base view definition, agreed on 2026-11-26. Every deploy builds its own copy in its reporting schema.
 -- Grain: one row per rule result plus one row per table result without rule rows. Base of every dataset.
 -- Criticality weights come from bundle variables weight_* (defaults 3 / 2 / 1 / 2 = live values).
-CREATE OR REPLACE VIEW ${catalog}.${schema}.v_simple_results AS
+CREATE OR REPLACE VIEW `${catalog}`.`${schema}`.v_simple_results AS
 WITH params AS (
   SELECT
     ${weight_high} AS w_high,
@@ -24,7 +24,7 @@ result_rows AS (
     rr.rows_failed,
     rr.start_timestamp,
     rr.end_timestamp
-  FROM ${source_catalog}.${results_schema}.result_rule rr
+  FROM `${source_catalog}`.`${results_schema}`.result_rule rr
   UNION ALL
   SELECT
     CAST(NULL AS STRING) AS result_rule_id,
@@ -40,10 +40,10 @@ result_rows AS (
     CAST(NULL AS INT)    AS rows_failed,
     t.start_timestamp,
     t.end_timestamp
-  FROM ${source_catalog}.${results_schema}.result_table t
+  FROM `${source_catalog}`.`${results_schema}`.result_table t
   WHERE NOT EXISTS (
     SELECT 1
-    FROM ${source_catalog}.${results_schema}.result_rule rr
+    FROM `${source_catalog}`.`${results_schema}`.result_rule rr
     WHERE rr.result_table_id = t.result_table_id
   )
 ),
@@ -56,7 +56,7 @@ linked AS (
     t.start_timestamp                             AS table_start_timestamp,
     COALESCE(x.result_id, t.result_id)            AS direct_result_id
   FROM result_rows x
-  LEFT JOIN ${source_catalog}.${results_schema}.result_table t
+  LEFT JOIN `${source_catalog}`.`${results_schema}`.result_table t
     ON t.result_table_id = x.result_table_id
 ),
 window_execution AS (
@@ -65,7 +65,7 @@ window_execution AS (
     r.result_id,
     ROW_NUMBER() OVER (PARTITION BY l.row_key ORDER BY r.start_timestamp DESC) AS rn
   FROM linked l
-  JOIN ${source_catalog}.${results_schema}.result r
+  JOIN `${source_catalog}`.`${results_schema}`.result r
     ON l.direct_result_id IS NULL
    AND l.start_timestamp BETWEEN r.start_timestamp AND r.end_timestamp
 ),
@@ -117,23 +117,23 @@ enriched AS (
   LEFT JOIN window_execution w
     ON w.row_key = l.row_key
    AND w.rn = 1
-  LEFT JOIN ${source_catalog}.${results_schema}.result e
+  LEFT JOIN `${source_catalog}`.`${results_schema}`.result e
     ON e.result_id = COALESCE(l.direct_result_id, w.result_id)
-  LEFT JOIN ${source_catalog}.${configuration_schema}.rule_assignment ra
+  LEFT JOIN `${source_catalog}`.`${configuration_schema}`.rule_assignment ra
     ON ra.rule_assignment_id = l.rule_assignment_id
-  LEFT JOIN ${source_catalog}.${configuration_schema}.rule_template tpl
+  LEFT JOIN `${source_catalog}`.`${configuration_schema}`.rule_template tpl
     ON tpl.rule_template_id = ra.rule_template_id
-  LEFT JOIN ${source_catalog}.${configuration_schema}.run_policy rp
+  LEFT JOIN `${source_catalog}`.`${configuration_schema}`.run_policy rp
     ON rp.policy_id = COALESCE(l.policy_id, ra.policy_id)
-  LEFT JOIN ${source_catalog}.${metadata_schema}.rule_dimension rd
+  LEFT JOIN `${source_catalog}`.`${metadata_schema}`.rule_dimension rd
     ON rd.rule_dimension_id = COALESCE(l.rule_dimension_id, tpl.rule_dimension_id)
-  LEFT JOIN ${catalog}.${schema}.v_simple_dimension d
+  LEFT JOIN `${catalog}`.`${schema}`.v_simple_dimension d
     ON d.rule_dimension = rd.rule_dimension
-  LEFT JOIN ${source_catalog}.${metadata_schema}.`table` m
+  LEFT JOIN `${source_catalog}`.`${metadata_schema}`.`table` m
     ON m.table_id = COALESCE(l.rt_table_id, ra.table_id)
-  LEFT JOIN ${source_catalog}.${metadata_schema}.project p
+  LEFT JOIN `${source_catalog}`.`${metadata_schema}`.project p
     ON p.project_id = COALESCE(l.project_id, l.rt_project_id, e.project_id, ra.project_id)
-  LEFT JOIN ${catalog}.${schema}.v_simple_status s
+  LEFT JOIN `${catalog}`.`${schema}`.v_simple_status s
     ON s.status = l.status
 )
 SELECT

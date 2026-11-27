@@ -1,6 +1,6 @@
--- Owner: eva.routsi@ms.d-one.ai. Copied from the live view analytics_dq_dev.reporting.v_simple_dimension on 2026-11-26 (source of truth).
+-- Base view definition, agreed on 2026-11-26. Every deploy builds its own copy in its reporting schema.
 -- Grain: one row per known rule_dimension name.
-CREATE OR REPLACE VIEW ${catalog}.${schema}.v_simple_dimension AS
+CREATE OR REPLACE VIEW `${catalog}`.`${schema}`.v_simple_dimension AS
 SELECT
   rule_dimension,
   dimension_label

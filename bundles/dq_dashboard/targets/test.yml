@@ -1,11 +1,12 @@
 # =============================================================================
 # TEST - separate test workspace. Deployed by CI as the service principal.
 #
-# TODO before first deploy (see README.md, "First deploy to a new workspace"):
+# TODO before first deploy (see README.md, section 7 "Setting up test and prod"):
 #   1. workspace.host           -> URL of the test workspace
 #   2. service_principal        -> application ID of the deploy/run service principal
 #   3. warehouse_id lookup      -> name of the SQL warehouse in that workspace
 #   4. notification_email       -> team address
+#   5. account groups -> owner_group / uc_viewer_group must be account groups
 # All values can also be given at deploy time:  BUNDLE_VAR_<name>=<value>
 # =============================================================================
 targets:
@@ -24,8 +25,6 @@ targets:
     permissions:
       - group_name: ${var.owner_group}
         level: CAN_MANAGE
-      - group_name: ${var.viewer_group}
-        level: CAN_VIEW
     variables:
       catalog: analytics_dq_test
       schema: reporting
@@ -35,3 +34,5 @@ targets:
       deploy_base_views: "true"
       create_base_tables: "true"
       schedule_status: UNPAUSED
+      service_principal: "<SERVICE_PRINCIPAL_APPLICATION_ID>"
+      notification_email: "<DQ_TEAM_EMAIL>"

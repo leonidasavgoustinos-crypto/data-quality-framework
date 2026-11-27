@@ -1,7 +1,7 @@
--- Owner: eva.routsi@ms.d-one.ai. Copied from the live view analytics_dq_dev.reporting.v_simple_quality_score on 2026-11-26 (source of truth).
+-- Base view definition, agreed on 2026-11-26. Every deploy builds its own copy in its reporting schema.
 -- Grain: one row per as_of in {E (k = 1), P (k = 2)}: quality score.
 -- Score parameters come from bundle variables score_* (defaults = live values).
-CREATE OR REPLACE VIEW ${catalog}.${schema}.v_simple_quality_score AS
+CREATE OR REPLACE VIEW `${catalog}`.`${schema}`.v_simple_quality_score AS
 WITH params AS (
   SELECT
     ${score_k_shrink}   AS k_shrink,
@@ -12,11 +12,11 @@ WITH params AS (
 ),
 known_tables AS (
   SELECT table_id
-  FROM ${source_catalog}.${metadata_schema}.`table`
+  FROM `${source_catalog}`.`${metadata_schema}`.`table`
 ),
 run_days AS (
   SELECT DISTINCT run_date
-  FROM ${catalog}.${schema}.v_simple_results
+  FROM `${catalog}`.`${schema}`.v_simple_results
   WHERE result_rule_id IS NOT NULL
 ),
 as_of_days AS (
@@ -42,7 +42,7 @@ scored AS (
       WHEN r.status = 'error'                              THEN 0.0
       WHEN r.status = 'warning'                            THEN 1 - p.warning_penalty
     END           AS credit
-  FROM ${catalog}.${schema}.v_simple_results r
+  FROM `${catalog}`.`${schema}`.v_simple_results r
   CROSS JOIN params p
   WHERE r.is_latest_for_day
     AND r.is_scored
@@ -52,7 +52,7 @@ table_days AS (
   SELECT DISTINCT
     r.table_id,
     r.run_date
-  FROM ${catalog}.${schema}.v_simple_results r
+  FROM `${catalog}`.`${schema}`.v_simple_results r
   WHERE r.result_rule_id IS NOT NULL
     AND r.table_id IN (SELECT table_id FROM known_tables)
 ),
